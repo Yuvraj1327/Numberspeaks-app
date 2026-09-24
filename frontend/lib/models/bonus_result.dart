@@ -1,0 +1,55 @@
+/// Mirrors `BonusResult` (app/schemas/bonus.py) exactly. `bonusAmount` stays
+/// nullable end-to-end — the UI must treat null as "not calculated yet",
+/// never substitute or compute a value for it.
+class BonusResult {
+  final String bonusResultId;
+  final String reportId;
+  final String userId;
+  final String userName;
+  final String? level;
+  final double casinoPts;
+  final double sportPts;
+  final double thirdPartyPts;
+  final double profitLoss;
+  final String? ptype;
+  final double? bonusAmount;
+  final String? createdAt;
+
+  const BonusResult({
+    required this.bonusResultId,
+    required this.reportId,
+    required this.userId,
+    required this.userName,
+    required this.level,
+    required this.casinoPts,
+    required this.sportPts,
+    required this.thirdPartyPts,
+    required this.profitLoss,
+    required this.ptype,
+    required this.bonusAmount,
+    required this.createdAt,
+  });
+
+  factory BonusResult.fromJson(Map<String, dynamic> json) {
+    return BonusResult(
+      bonusResultId: json['bonus_result_id'] as String? ?? '',
+      reportId: json['report_id'] as String? ?? '',
+      userId: json['user_id'] as String? ?? '',
+      userName: json['user_name'] as String? ?? '',
+      level: json['level'] as String?,
+      casinoPts: _toDouble(json['casino_pts']),
+      sportPts: _toDouble(json['sport_pts']),
+      thirdPartyPts: _toDouble(json['third_party_pts']),
+      profitLoss: _toDouble(json['profit_loss']),
+      ptype: json['ptype'] as String?,
+      bonusAmount: json['bonus_amount'] == null ? null : _toDouble(json['bonus_amount']),
+      createdAt: json['created_at'] as String?,
+    );
+  }
+}
+
+double _toDouble(dynamic value) {
+  if (value == null) return 0;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString()) ?? 0;
+}

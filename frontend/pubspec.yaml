@@ -1,0 +1,55 @@
+name: numberspeaks_app
+description: "Numberspeaks — Bonus Calculation App (Flutter frontend for the FastAPI backend)."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Backend access (Supabase Auth only — the FastAPI backend does not yet
+  # verify sessions; see README "Known backend gaps").
+  supabase_flutter: ^2.6.0
+
+  # HTTP client for the FastAPI backend (multipart upload with progress,
+  # typed exceptions, timeouts).
+  dio: ^5.7.0
+  # Used directly for MultipartFile content-type on PDF uploads. Already a
+  # transitive dependency of dio; declared explicitly since we import it.
+  http_parser: ^4.0.2
+
+  # State management, kept deliberately simple (ChangeNotifier + Provider),
+  # matching the rest of this project's "keep it simple" approach.
+  provider: ^6.1.2
+
+  # PDF file selection for the upload screen.
+  file_picker: ^8.1.2
+
+  # Number/date formatting for bonus amounts and timestamps.
+  intl: ^0.19.0
+
+  # Local, on-device only "last uploaded report id" persistence — used
+  # because the backend has no "list reports" / "latest report" endpoint.
+  # Never used to store bonus data, users, or anything from the server.
+  shared_preferences: ^2.3.2
+
+  # Reads a real .env file at startup, mirroring the backend's own
+  # python-dotenv usage (see core/app_config.dart and .env.example).
+  flutter_dotenv: ^5.2.1
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    # Bundled at build time so flutter_dotenv can read it at startup. Must
+    # exist before `flutter run`/`flutter build` — see .env.example.
+    - .env
