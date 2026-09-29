@@ -19,7 +19,13 @@ from supabase import Client
 from app.schemas.bonus import BonusCalculationError, BonusResult
 from app.schemas.validation import InvalidRecord
 from app.services.bonus_calculator import BonusFormulaNotConfiguredError, BonusInput, calculate_bonus, is_formula_configured
-from app.services.reports_service import bonus_result_row_to_raw, default_row_reference, to_bonus_result, update_bonus_amount
+from app.services.reports_service import (
+    bonus_result_row_to_raw,
+    default_row_reference,
+    to_bonus_result,
+    update_bonus_amount,
+    update_calculation_status,
+)
 from app.services.validation import validate_record
 
 logger = logging.getLogger("numberspeaks")
@@ -66,6 +72,14 @@ def run_bonus_calculation(
                     bonus_result_id=bonus_result_id, user_name=user_name, issues=outcome.issues
                 )
             )
+            if bonus_result_id:
+                try:
+                    update_calculation_status(db, bonus_result_id, "invalid")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Could not persist 'invalid' status for %r (row %s): %s",
+                        user_name, bonus_result_id, exc,
+                    )
             continue
 
         bonus_input = BonusInput(
@@ -91,6 +105,14 @@ def run_bonus_calculation(
                     issues=[f"Calculation failed: {exc}"],
                 )
             )
+            if bonus_result_id:
+                try:
+                    update_calculation_status(db, bonus_result_id, "invalid")
+                except Exception as status_exc:  # noqa: BLE001
+                    logger.warning(
+                        "Could not persist 'invalid' status for %r (row %s): %s",
+                        user_name, bonus_result_id, status_exc,
+                    )
             continue
 
         try:
@@ -108,6 +130,7 @@ def run_bonus_calculation(
 
         calculated += 1
         row["bonus_amount"] = amount
+        row["calculation_status"] = "calculated"
         results.append(to_bonus_result(row))
 
     return calculated, results, errors

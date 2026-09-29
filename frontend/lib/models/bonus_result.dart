@@ -6,6 +6,7 @@ class BonusResult {
   final String reportId;
   final String userId;
   final String userName;
+  final String? whatsappNumber;
   final String? level;
   final double casinoPts;
   final double sportPts;
@@ -13,6 +14,16 @@ class BonusResult {
   final double profitLoss;
   final String? ptype;
   final double? bonusAmount;
+
+  /// 'pending' (not yet calculated), 'calculated', or 'invalid' (row
+  /// failed validation and was never calculated). Defaults to 'pending'
+  /// if the backend ever omits it, matching the API's own default.
+  final String calculationStatus;
+
+  /// Latest WhatsApp send outcome for this user: 'not_sent', 'sent', or
+  /// 'failed'. Defaults to 'not_sent', matching the API's own default.
+  final String whatsappStatus;
+
   final String? createdAt;
 
   const BonusResult({
@@ -20,6 +31,7 @@ class BonusResult {
     required this.reportId,
     required this.userId,
     required this.userName,
+    required this.whatsappNumber,
     required this.level,
     required this.casinoPts,
     required this.sportPts,
@@ -27,6 +39,8 @@ class BonusResult {
     required this.profitLoss,
     required this.ptype,
     required this.bonusAmount,
+    required this.calculationStatus,
+    required this.whatsappStatus,
     required this.createdAt,
   });
 
@@ -36,6 +50,7 @@ class BonusResult {
       reportId: json['report_id'] as String? ?? '',
       userId: json['user_id'] as String? ?? '',
       userName: json['user_name'] as String? ?? '',
+      whatsappNumber: json['whatsapp_number'] as String?,
       level: json['level'] as String?,
       casinoPts: _toDouble(json['casino_pts']),
       sportPts: _toDouble(json['sport_pts']),
@@ -43,6 +58,8 @@ class BonusResult {
       profitLoss: _toDouble(json['profit_loss']),
       ptype: json['ptype'] as String?,
       bonusAmount: json['bonus_amount'] == null ? null : _toDouble(json['bonus_amount']),
+      calculationStatus: json['calculation_status'] as String? ?? 'pending',
+      whatsappStatus: json['whatsapp_status'] as String? ?? 'not_sent',
       createdAt: json['created_at'] as String?,
     );
   }

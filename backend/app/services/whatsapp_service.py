@@ -79,6 +79,21 @@ def send_bonus_whatsapp_for_report(db: Client, report_id: str, force: bool = Fal
         user_name = user.get("name") or ""
         whatsapp_number = user.get("whatsapp_number")
         bonus_result_id = row["id"]
+        bonus_amount = row.get("bonus_amount") or 0
+
+        if bonus_amount <= 0:
+            skipped_count += 1
+            results.append(
+                WhatsAppMessageResult(
+                    bonus_result_id=bonus_result_id,
+                    user_id=user_id,
+                    user_name=user_name,
+                    whatsapp_number=whatsapp_number,
+                    status="skipped_no_bonus",
+                    error="No bonus is owed for this user (profit/loss was not a loss).",
+                )
+            )
+            continue
 
         if not whatsapp_number:
             skipped_count += 1

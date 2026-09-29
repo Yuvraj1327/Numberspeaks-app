@@ -1,16 +1,17 @@
 """
-Bonus calculation and results endpoints (Steps 5-6).
+Bonus calculation and results endpoints.
 
 Flow: a report must already be validated (Step 4, status == "validated")
 before calculation can start. Calculation re-validates each row defensively,
-computes a bonus per user independently via app/services/bonus_calculator.py,
-saves it to bonus_results, and updates the report's status. Results can then
-be listed for the whole report or looked up for one user.
+computes a bonus per user independently via app/services/bonus_calculator.py
+(the client's real formula: 3% of a loss, 0 otherwise), saves it to
+bonus_results, and updates the report's status. Results can then be listed
+for the whole report or looked up for one user, each joined with its
+latest WhatsApp send outcome for the admin results view.
 
-The actual bonus formula is not implemented yet (the client hasn't provided
-it) — POST /calculate-bonus returns 501 Not Implemented with a clear
-message until app/services/bonus_calculator.py is filled in. Nothing here
-invents a number in its place.
+POST /calculate-bonus still returns 501 Not Implemented, unmodified, in
+the (now hypothetical) case bonus_calculator.is_formula_configured() ever
+returns False again — nothing here invents a number in its place.
 """
 
 import logging
@@ -24,6 +25,7 @@ from app.services.bonus_service import run_bonus_calculation
 from app.services.reports_service import (
     get_bonus_result_for_user,
     get_bonus_results_for_report,
+    get_latest_whatsapp_status,
     get_report,
     to_bonus_result,
     update_report_status,
@@ -129,7 +131,15 @@ async def get_report_results(report_id: str) -> list[BonusResult]:
             detail=f"Could not read this report's results: {exc}",
         ) from exc
 
-    return [to_bonus_result(row) for row in rows]
+    results = []
+    for row in rows:
+        try:
+            wa_status = get_latest_whatsapp_status(db, row["id"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read WhatsApp status for bonus_result %s: %s", row["id"], exc)
+            wa_status = None
+        results.append(to_bonus_result(row, whatsapp_status=wa_status))
+    return results
 
 
 @router.get(
@@ -156,4 +166,10 @@ async def get_user_result(report_id: str, user_id: str) -> BonusResult:
             detail=f"No bonus result found for user {user_id} on report {report_id}",
         )
 
-    return to_bonus_result(row)
+    try:
+        wa_status = get_latest_whatsapp_status(db, row["id"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read WhatsApp status for bonus_result %s: %s", row["id"], exc)
+        wa_status = None
+
+    return to_bonus_result(row, whatsapp_status=wa_status)

@@ -7,9 +7,10 @@ validation rules, no bonus math, no invented fields — a row is either
 extracted as-is or skipped with a reason, and every skip is reported back
 rather than silently dropped.
 
-Column order, per the client:
-    No | User Name | Level | Casino Pts | Sport Pts | Third Party Pts |
-    Profit/Loss | Ptype
+Column order, per the client (updated for the "actual bonus feature" spec,
+which adds WhatsApp Number as a required-when-available column):
+    No | User Name | WhatsApp Number | Level | Casino Pts | Sport Pts |
+    Third Party Pts | Profit/Loss | Ptype
 """
 
 import io
@@ -26,6 +27,7 @@ from app.schemas.report import ExtractedRecord
 CANONICAL_FIELDS = [
     "no",
     "user_name",
+    "whatsapp_number",
     "level",
     "casino_pts",
     "sport_pts",
@@ -46,6 +48,16 @@ HEADER_ALIASES: Dict[str, str] = {
     "user name": "user_name",
     "username": "user_name",
     "name": "user_name",
+    "whatsapp number": "whatsapp_number",
+    "whatsapp no": "whatsapp_number",
+    "whatsapp": "whatsapp_number",
+    "mobile number": "whatsapp_number",
+    "mobile no": "whatsapp_number",
+    "mobile": "whatsapp_number",
+    "phone number": "whatsapp_number",
+    "phone no": "whatsapp_number",
+    "phone": "whatsapp_number",
+    "contact number": "whatsapp_number",
     "level": "level",
     "casino pts": "casino_pts",
     "casino points": "casino_pts",
@@ -163,6 +175,7 @@ def _row_to_record(
 
     parsed: Dict[str, object] = {
         "user_name": user_name,
+        "whatsapp_number": _normalize_cell(values.get("whatsapp_number")) or None,
         "level": _normalize_cell(values.get("level")) or None,
         "ptype": _normalize_cell(values.get("ptype")) or None,
     }

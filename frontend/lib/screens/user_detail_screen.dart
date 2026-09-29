@@ -12,12 +12,14 @@ import '../widgets/status_pill.dart';
 /// Screen 6 — Individual User Bonus Details.
 ///
 /// Uses GET /api/v1/reports/{report_id}/results/{user_id} to refresh the
-/// result passed in from the Results screen. WhatsApp status here can only
-/// reflect a send made during the current app session (no backend endpoint
-/// returns historical WhatsApp status), and there is no per-user WhatsApp
-/// send endpoint — only a report-wide one (see Results screen) — so this
-/// screen shows status and directs the user back to the report-wide action
-/// rather than inventing one, per the spec's own "where supported" wording.
+/// result passed in from the Results screen, including its durable
+/// `whatsapp_status` (the latest send outcome, persisted server-side —
+/// survives app restarts). A same-session send is preferred when present
+/// since it can be more specific (see ReportRepository.
+/// sessionWhatsAppStatusFor). There is no per-user WhatsApp send endpoint —
+/// only a report-wide one (see Results screen) — so this screen shows
+/// status and directs the user back to the report-wide action rather than
+/// inventing one.
 class UserDetailScreen extends StatefulWidget {
   final UserDetailArgs args;
 
@@ -64,8 +66,12 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final repo = context.watch<ReportRepository>();
+    // The session cache (if a send just happened) can be more specific
+    // than the backend's own latest-status field; otherwise fall back to
+    // that durable value from GET /results, which is always present.
     final whatsAppStatus =
-        repo.sessionWhatsAppStatusFor(widget.args.reportId, _result.bonusResultId);
+        repo.sessionWhatsAppStatusFor(widget.args.reportId, _result.bonusResultId) ??
+            _result.whatsappStatus;
 
     return Scaffold(
       appBar: AppBar(
@@ -126,6 +132,7 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _DetailRow(label: 'User Name', value: _result.userName),
+                    _DetailRow(label: 'WhatsApp Number', value: _result.whatsappNumber ?? 'Not on file'),
                     _DetailRow(label: 'Level', value: _result.level ?? '—'),
                     _DetailRow(label: 'Casino Pts', value: Formatters.points(_result.casinoPts)),
                     _DetailRow(label: 'Sport Pts', value: Formatters.points(_result.sportPts)),
@@ -154,16 +161,12 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                                 .titleMedium
                                 ?.copyWith(fontWeight: FontWeight.w600)),
                         const Spacer(),
-                        if (whatsAppStatus != null) StatusPill.forWhatsAppStatus(whatsAppStatus),
+                        StatusPill.forWhatsAppStatus(whatsAppStatus),
                       ],
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     Text(
-                      whatsAppStatus != null
-                          ? _messageForStatus(whatsAppStatus)
-                          : 'No WhatsApp status available for this user in the current session. '
-                              'Use "Send Bonus via WhatsApp" on the Results screen to send to all '
-                              'users on this report.',
+                      _messageForStatus(whatsAppStatus),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
                     ),
                     const SizedBox(height: AppSpacing.md),
@@ -192,6 +195,12 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
         return 'Sending the WhatsApp message to this user failed.';
       case 'skipped_no_number':
         return 'This user has no WhatsApp number on file.';
+      case 'skipped_no_bonus':
+        return 'No bonus is owed for this user, so no message was sent.';
+      case 'not_sent':
+        return 'No WhatsApp message has been sent to this user yet for this report. '
+            'Use "Send Bonus via WhatsApp" on the Results screen to send to all '
+            'eligible users on this report.';
       default:
         return 'Status: $status';
     }

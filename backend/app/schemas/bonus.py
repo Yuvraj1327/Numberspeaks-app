@@ -16,6 +16,7 @@ class BonusResult(BaseModel):
     report_id: str
     user_id: str
     user_name: str
+    whatsapp_number: Optional[str] = None
     level: Optional[str] = None
     casino_pts: float
     sport_pts: float
@@ -24,6 +25,17 @@ class BonusResult(BaseModel):
     ptype: Optional[str] = None
     bonus_amount: Optional[float] = Field(
         None, description="Null until calculated — never a guessed value."
+    )
+    calculation_status: str = Field(
+        "pending",
+        description="'pending' (not yet calculated), 'calculated', or 'invalid' "
+        "(row failed validation and was not calculated).",
+    )
+    whatsapp_status: str = Field(
+        "not_sent",
+        description="Latest WhatsApp send attempt's outcome for this user: "
+        "'not_sent' (never attempted — e.g. no bonus, no number, or not "
+        "sent yet), 'sent', or 'failed'. Part of the admin results view.",
     )
     created_at: Optional[str] = None
 

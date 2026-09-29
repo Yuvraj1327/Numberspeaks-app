@@ -33,8 +33,12 @@ class StatusPill extends StatelessWidget {
   }
 
   /// For a raw WhatsApp message status string ("sent" | "failed" |
-  /// "skipped_already_sent" | "skipped_no_number"), taken verbatim from the
-  /// backend and only re-labeled for readability, never reinterpreted.
+  /// "skipped_already_sent" | "skipped_no_number" | "skipped_no_bonus" |
+  /// "not_sent"), taken verbatim from the backend and only re-labeled for
+  /// readability, never reinterpreted. Covers both the per-send-attempt
+  /// status (WhatsAppMessageResult, from POST /send-whatsapp) and the
+  /// simpler latest-status field on a bonus result (BonusResult.
+  /// whatsappStatus, shown on the Results/User Detail screens).
   factory StatusPill.forWhatsAppStatus(String status) {
     switch (status) {
       case 'sent':
@@ -45,6 +49,10 @@ class StatusPill extends StatelessWidget {
         return const StatusPill(label: 'Failed', color: AppTheme.danger);
       case 'skipped_no_number':
         return const StatusPill(label: 'No WhatsApp number', color: AppTheme.warning);
+      case 'skipped_no_bonus':
+        return const StatusPill(label: 'No bonus owed', color: Colors.black54);
+      case 'not_sent':
+        return const StatusPill(label: 'Not sent', color: Colors.black54);
       default:
         return StatusPill(label: status, color: Colors.black54);
     }

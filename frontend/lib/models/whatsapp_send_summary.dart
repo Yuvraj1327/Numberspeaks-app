@@ -1,6 +1,7 @@
 /// Mirrors `WhatsAppMessageResult` (app/schemas/whatsapp.py). `status` is one
 /// of exactly: "sent" | "failed" | "skipped_already_sent" | "skipped_no_number"
-/// — taken verbatim from the backend, never re-derived client-side.
+/// | "skipped_no_bonus" — taken verbatim from the backend, never re-derived
+/// client-side.
 class WhatsAppMessageResult {
   final String bonusResultId;
   final String userId;
@@ -26,6 +27,7 @@ class WhatsAppMessageResult {
   bool get isAlreadySent => status == 'skipped_already_sent';
   bool get isFailed => status == 'failed';
   bool get isSkippedNoNumber => status == 'skipped_no_number';
+  bool get isSkippedNoBonus => status == 'skipped_no_bonus';
 
   factory WhatsAppMessageResult.fromJson(Map<String, dynamic> json) {
     return WhatsAppMessageResult(

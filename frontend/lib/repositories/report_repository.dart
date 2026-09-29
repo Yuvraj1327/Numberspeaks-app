@@ -80,10 +80,13 @@ class ReportRepository extends ChangeNotifier {
     return summary;
   }
 
-  /// Status for one user's WhatsApp message, if a send happened during this
-  /// app session for this report. Null means "unknown" (not: "not sent") —
-  /// the backend has no endpoint to look this up historically, so the UI
-  /// must not claim to know a status it doesn't actually have.
+  /// Status for one user's WhatsApp message from a send that happened
+  /// during this app session for this report, if any. Null means "no send
+  /// happened this session" — callers should fall back to the durable
+  /// `BonusResult.whatsappStatus` from GET /results in that case (this
+  /// session-only value is kept because it can be more specific right
+  /// after a send, e.g. distinguishing "skipped_already_sent" from a
+  /// plain "not_sent").
   String? sessionWhatsAppStatusFor(String reportId, String bonusResultId) {
     final summary = _sessionWhatsAppSummaries[reportId];
     if (summary == null) return null;

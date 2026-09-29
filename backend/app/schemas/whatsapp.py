@@ -10,7 +10,7 @@ class WhatsAppMessageResult(BaseModel):
     user_id: str
     user_name: str
     whatsapp_number: Optional[str] = None
-    status: str  # "sent" | "failed" | "skipped_already_sent" | "skipped_no_number"
+    status: str  # "sent" | "failed" | "skipped_already_sent" | "skipped_no_number" | "skipped_no_bonus"
     message: Optional[str] = None
     provider_message_id: Optional[str] = None
     error: Optional[str] = None

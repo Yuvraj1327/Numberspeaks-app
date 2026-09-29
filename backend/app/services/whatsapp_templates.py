@@ -1,17 +1,25 @@
 """
 WhatsApp message formatting.
 
-The client has not provided exact wording yet, only that the message
-should be "a simple bonus summary." DEFAULT_TEMPLATE below is that simple
-summary — clearly a default, not approved copy, and built only from data
-already sitting in a bonus_results row plus the user's name/level (nothing
-invented, nothing calculated here).
+The client proposed this exact wording for the bonus notification:
+    "Dear {Name},
 
-Kept swappable two ways, so the client's real wording never requires a
-code change:
+    ₹{Bonus Amount} has been created to your wallet.
+    Please enjoy the game!"
+
+DEFAULT_TEMPLATE below intentionally does NOT use that "created to your
+wallet" phrase. Per the client's own stated caveat, that wording should
+only be used if the app actually has a wallet/credit API — and it doesn't:
+nothing in this codebase credits a wallet anywhere. Saying so would tell
+the user something happened that didn't, so the default here reports the
+bonus amount honestly instead. The wording stays fully configurable (see
+below), so switching to the client's exact phrase is a one-line env change
+whenever a real wallet API exists to back it up — no code change needed.
+
+Kept swappable two ways, so wording never requires a code change:
   1. Set WHATSAPP_MESSAGE_TEMPLATE in .env to any string using the same
      {placeholder} names as DEFAULT_TEMPLATE below.
-  2. Or edit DEFAULT_TEMPLATE directly once the format is confirmed.
+  2. Or edit DEFAULT_TEMPLATE directly once the final wording is confirmed.
 """
 
 import logging
@@ -25,15 +33,9 @@ logger = logging.getLogger("numberspeaks")
 # Placeholders available: user_name, level, casino_pts, sport_pts,
 # third_party_pts, profit_loss, ptype, bonus_amount.
 DEFAULT_TEMPLATE = (
-    "Hi {user_name},\n\n"
-    "Here is your bonus summary:\n"
-    "Level: {level}\n"
-    "Casino Pts: {casino_pts}\n"
-    "Sport Pts: {sport_pts}\n"
-    "Third Party Pts: {third_party_pts}\n"
-    "Profit/Loss: {profit_loss}\n"
-    "Bonus Amount: {bonus_amount}\n\n"
-    "Thank you."
+    "Dear {user_name},\n\n"
+    "Your bonus amount is ₹{bonus_amount}.\n"
+    "Please enjoy the game!"
 )
 
 

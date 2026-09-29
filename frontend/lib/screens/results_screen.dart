@@ -216,9 +216,14 @@ class _ResultsScreenState extends State<ResultsScreen> {
                     separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
                     itemBuilder: (context, index) => _ResultCard(
                       result: visible[index],
+                      // The session cache (if a send just happened) can be
+                      // more specific than the backend's own latest-status
+                      // field; otherwise fall back to that durable value
+                      // from GET /results, which is always present.
                       whatsAppStatus: context
-                          .read<ReportRepository>()
-                          .sessionWhatsAppStatusFor(widget.reportId, visible[index].bonusResultId),
+                              .read<ReportRepository>()
+                              .sessionWhatsAppStatusFor(widget.reportId, visible[index].bonusResultId) ??
+                          visible[index].whatsappStatus,
                       onTap: () => Navigator.of(context).pushNamed(
                         AppRoutes.userDetail,
                         arguments: UserDetailArgs(
@@ -275,6 +280,11 @@ class _ResultCard extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
                 ),
               ],
+              const SizedBox(height: 2),
+              Text(
+                'WhatsApp: ${result.whatsappNumber ?? 'Not on file'}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
+              ),
               const SizedBox(height: AppSpacing.sm),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,

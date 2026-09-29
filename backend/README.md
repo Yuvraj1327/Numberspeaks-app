@@ -9,8 +9,9 @@ Completed so far:
 - **Step 4:** Validation — re-checks extracted rows before they're used for bonus calculation.
 - **Steps 5-6:** Bonus calculation & results APIs — the full pipeline is wired up; only the client's exact formula is still pending.
 - **Step 7:** WhatsApp integration — sends each user's calculated bonus to their WhatsApp number, with per-message success/failure tracking and accidental-resend protection.
+- **Actual Bonus Feature:** the client's real bonus formula, the PDF's WhatsApp Number column, durable calculation/WhatsApp status tracking, and the full Admin → PDF → Bonus → WhatsApp flow. See "[Actual Bonus Feature](#actual-bonus-feature-client-confirmed-formula--flow)" below.
 
-Still pending from the client: the exact bonus formula and the exact WhatsApp message wording/provider (see the relevant sections below for the assumptions made in the meantime).
+The exact WhatsApp provider credentials are still the client's own to supply (see Step 7's section below) — everything else the client had left open is now implemented per their confirmed spec.
 
 ## Project structure
 
@@ -31,7 +32,7 @@ numberspeaks-backend/
 │   │   ├── pdf_extractor.py         # Turns PDF pages into structured records
 │   │   ├── reports_service.py       # All Supabase reads/writes for reports & results
 │   │   ├── validation.py            # Checks extracted rows before bonus calculation
-│   │   ├── bonus_calculator.py      # THE CLIENT'S FORMULA GOES HERE (not yet provided)
+│   │   ├── bonus_calculator.py      # The client's real formula: 3% of a loss, else 0
 │   │   ├── bonus_service.py         # Orchestrates validate -> calculate -> save per user
 │   │   ├── whatsapp_templates.py    # Builds the message text (configurable)
 │   │   ├── whatsapp_client.py       # Talks to the WhatsApp provider (Meta Cloud API)
@@ -413,20 +414,15 @@ returned `report_id`.
 
 ## Bonus calculation & results (Steps 5-6)
 
-### ⚠️ The client's bonus formula has not been provided yet
+### ✅ The client's bonus formula is implemented
 
-Everything in Steps 5-6 is built and wired end to end **except the actual
-math**. `app/services/bonus_calculator.py` contains one function,
-`calculate_bonus()`, whose body is a clearly marked placeholder that
-raises `BonusFormulaNotConfiguredError` instead of guessing at a formula.
-Calling `POST /calculate-bonus` right now returns `501 Not Implemented`
-with a message pointing at exactly that function.
-
-**To activate bonus calculation:** open `app/services/bonus_calculator.py`,
-replace the body of `calculate_bonus()` with the client's exact formula,
-and flip `is_formula_configured()` to return `True`. Nothing else in the
-codebase needs to change — the API, validation, Supabase saving, and
-results endpoints are already calling this function correctly.
+`app/services/bonus_calculator.py` now contains the client's confirmed
+formula — see "[Actual Bonus Feature](#actual-bonus-feature-client-confirmed-formula--flow)"
+below for the full explanation and examples. `is_formula_configured()`
+returns `True`, and `POST /calculate-bonus` runs the real math.
+`BonusFormulaNotConfiguredError` and the `501` response are kept in the
+code as a safety net only — they'd fire again if `calculate_bonus()` were
+ever gutted back to a placeholder, but that's not the current state.
 
 ### Calculation API
 
@@ -461,13 +457,20 @@ GET /api/v1/reports/{report_id}/results/{user_id}      # one user's result for t
 ```
 
 Both return the input values (`casino_pts`, `sport_pts`, `third_party_pts`,
-`profit_loss`, `ptype`, plus the user's `level`) alongside `bonus_amount`
-— `bonus_amount` is `null` until calculation has run for that report.
-`404` if the report, or that user's result within it, doesn't exist.
+`profit_loss`, `ptype`, plus the user's `level` and `whatsapp_number`)
+alongside `bonus_amount` — `bonus_amount` is `null` until calculation has
+run for that report — and two status fields: `calculation_status`
+(`"pending"` / `"calculated"` / `"invalid"`) and `whatsapp_status`
+(`"not_sent"` / `"sent"` / `"failed"`, the latest send attempt's outcome).
+Together with `user_name`, `whatsapp_number`, `profit_loss` and
+`bonus_amount`, `whatsapp_status` is exactly the `User Name | WhatsApp |
+Profit/Loss | Bonus | WhatsApp Status` view the admin screen needs — no
+separate endpoint required. `404` if the report, or that user's result
+within it, doesn't exist.
 
 ### Example response
 
-`POST /calculate-bonus` (once the formula is implemented):
+`POST /calculate-bonus`:
 ```json
 {
   "report_id": "b3b6a5b0-...",
@@ -478,10 +481,11 @@ Both return the input values (`casino_pts`, `sport_pts`, `third_party_pts`,
   "results": [
     {
       "bonus_result_id": "b1", "report_id": "r1", "user_id": "u1",
-      "user_name": "Rahul Sharma", "level": "Master",
-      "casino_pts": 120.5, "sport_pts": -30.0, "third_party_pts": 0.0,
-      "profit_loss": 500.75, "ptype": "User",
-      "bonus_amount": 50.08, "created_at": "2026-01-01"
+      "user_name": "Rahul", "whatsapp_number": "919999900001", "level": "Gold",
+      "casino_pts": 200.0, "sport_pts": 150.0, "third_party_pts": 50.0,
+      "profit_loss": -1000.0, "ptype": "User",
+      "bonus_amount": 30.0, "calculation_status": "calculated",
+      "whatsapp_status": "not_sent", "created_at": "2026-01-01"
     }
   ],
   "errors": [
@@ -490,17 +494,24 @@ Both return the input values (`casino_pts`, `sport_pts`, `third_party_pts`,
 }
 ```
 `GET /results/{user_id}` returns one object in that same `BonusResult`
-shape.
+shape, and `GET /results` returns a list of them.
 
 ### Supabase result structure
 
-No schema changes were needed — Step 2's `bonus_results` table already had
-exactly what this needed: the input values (`casino_pts`, `sport_pts`,
-`third_party_pts`, `profit_loss`, `ptype`) and a nullable `bonus_amount`
-column. Calculation only ever does `UPDATE bonus_results SET bonus_amount
-= ... WHERE id = ...` — the original extracted values are never modified,
-and `user_name`/`level` stay in `users`, reached via the existing
-`user_id` foreign key rather than being duplicated.
+Step 2's `bonus_results` table already had the input values (`casino_pts`,
+`sport_pts`, `third_party_pts`, `profit_loss`, `ptype`) and a nullable
+`bonus_amount` column. The Actual Bonus Feature update adds exactly one
+new column on top of that, via the additive migration
+`supabase/bonus_status_schema.sql` (run this once, after `schema.sql`):
+`calculation_status text not null default 'pending'`, constrained to
+`'pending' | 'calculated' | 'invalid'`. It exists because the real formula
+always returns a number — `bonus_amount = 0` for a non-loss row is now a
+valid, successfully-calculated result, not a missing one — so
+`bonus_amount IS NULL` alone can no longer tell "not yet calculated" apart
+from "row failed validation and was skipped." `user_name`/`level`/
+`whatsapp_number` stay in `users` (all three already existed there from
+Step 2), reached via the existing `user_id` foreign key rather than being
+duplicated.
 
 ### Test result
 
@@ -542,11 +553,18 @@ guessing at business rules the way the bonus formula would have been:
   provider-specific code lives in one file
   (`app/services/whatsapp_client.py`); switching providers later (Twilio,
   Gupshup, etc.) means rewriting that one file only.
-- **Message wording — a simple default template.** You asked for "a
-  simple bonus summary," so one was built (see the example below). It's
-  isolated in `app/services/whatsapp_templates.py`, and can be overridden
-  entirely via the `WHATSAPP_MESSAGE_TEMPLATE` environment variable — no
-  code change needed once the client confirms real wording.
+- **Message wording — close to your proposal, with one deliberate change.**
+  You proposed *"₹{Bonus Amount} has been created to your wallet."* This
+  app has no wallet or credit API anywhere — nothing here actually credits
+  a wallet — so saying that would tell the user something happened that
+  didn't. Per your own stated caveat ("only say it if there's a real
+  wallet API; otherwise store/display the amount and keep the wording
+  configurable"), the default template instead says *"Your bonus amount
+  is ₹{amount}."* — see the example below. It's isolated in
+  `app/services/whatsapp_templates.py`, and can be overridden entirely via
+  the `WHATSAPP_MESSAGE_TEMPLATE` environment variable — switching to your
+  exact wording (once/if a real wallet API exists) is a one-line env
+  change, no code change needed.
 
 ### WhatsApp service structure
 
@@ -571,6 +589,7 @@ POST /reports/{report_id}/send-whatsapp?force=false
         │
         ▼
  for each bonus_results row with a non-null bonus_amount:
+   ├─ bonus_amount <= 0 (no loss -> no bonus)? → skipped_no_bonus
    ├─ user has no whatsapp_number?           → skipped_no_number
    ├─ already has a "sent" message            → skipped_already_sent
    │  for this row, and force=false?            (force=true bypasses this)
@@ -589,17 +608,10 @@ its own row, so re-sends build history instead of erasing the last result.
 ### Example message (default template)
 
 ```
-Hi Rahul Sharma,
+Dear Rahul,
 
-Here is your bonus summary:
-Level: Master
-Casino Pts: 120.5
-Sport Pts: -30
-Third Party Pts: 0
-Profit/Loss: 500.75
-Bonus Amount: 50.08
-
-Thank you.
+Your bonus amount is ₹30.
+Please enjoy the game!
 ```
 
 ### Success / failure response
@@ -758,6 +770,160 @@ All checks passed: connection, insert, and read all work.
 You can also open `http://localhost:8000/docs` for the interactive Swagger
 UI, which lists every available endpoint.
 
+## Actual Bonus Feature (client-confirmed formula & flow)
+
+This section documents the update that implements your real bonus rule
+and message flow, on top of everything in Steps 1-7 above. Nothing here
+is invented — every rule below is exactly what you specified.
+
+### Files changed
+
+- `app/services/pdf_extractor.py` — added `whatsapp_number` to
+  `CANONICAL_FIELDS` (right after `user_name`, matching your column
+  order) and to `HEADER_ALIASES` (recognizes "WhatsApp Number", "Mobile
+  No", "Phone", "Contact Number", etc.); `_row_to_record()` now extracts
+  it as text (never run through numeric parsing).
+- `app/schemas/report.py` — `ExtractedRecord` gained `whatsapp_number`.
+- `app/services/validation.py` — carries `whatsapp_number` through
+  validation (optional — a missing number never fails validation, per
+  your own "bonus calculated but WhatsApp skipped" test case).
+- `app/services/reports_service.py` — `get_or_create_user()` now also
+  sets/updates a user's `whatsapp_number`; `save_extracted_records()`
+  passes it through; `to_bonus_result()` and `bonus_result_row_to_raw()`
+  carry it (and the two new status fields below) into every API response;
+  new `update_calculation_status()` and `get_latest_whatsapp_status()`
+  helpers.
+- `app/services/bonus_calculator.py` — **the real formula** (see below).
+  `is_formula_configured()` now returns `True`.
+- `app/services/bonus_service.py` — persists `calculation_status =
+  'invalid'` for any row that fails validation or calculation, so a
+  failure is saved durably, not just reported in the one API response
+  that produced it.
+- `app/services/whatsapp_service.py` — eligibility now requires
+  `bonus_amount > 0` (not just "calculated"), with a new
+  `skipped_no_bonus` status for the ₹0 case.
+- `app/services/whatsapp_templates.py` — new default message wording (see
+  "The WhatsApp message" below).
+- `app/schemas/bonus.py` — `BonusResult` gained `whatsapp_number`,
+  `calculation_status`, `whatsapp_status`.
+- `app/schemas/whatsapp.py` — documented the new `skipped_no_bonus` status
+  value.
+- `app/api/v1/endpoints/bonus.py` — `GET /results` and `GET
+  /results/{user_id}` now attach each row's latest WhatsApp status, so the
+  admin view (`User Name | WhatsApp | Profit/Loss | Bonus | WhatsApp
+  Status`) is available from a single call, with no separate lookup.
+- `supabase/bonus_status_schema.sql` — **new, additive migration.** Run
+  this once, after `schema.sql`, to add the `calculation_status` column.
+  Nothing existing is altered.
+- `numberspeaks_app/` (the Flutter app) — matching model, results-screen,
+  and user-detail-screen updates; see that project's own README.
+
+### The updated bonus calculation
+
+```python
+if profit_loss < 0:
+    bonus = abs(profit_loss) * 0.03
+else:
+    bonus = 0.0
+```
+Only a loss earns a bonus — 3% of its absolute value. A profit or exactly
+zero always yields ₹0, and the code path that would compute 3% of a
+*positive* number is never reached (there's an `if`, not an `abs()` that
+could hide a sign error). Verified against your own examples:
+
+| Profit/Loss | Bonus |
+|---|---|
+| -1000 | 30 |
+| -2500 | 75 |
+| -5000 | 150 |
+| +500 | 0 |
+
+Nothing else on the row (`level`, `casino_pts`, `sport_pts`,
+`third_party_pts`, `ptype`) affects the bonus — your rule is based on
+`profit_loss` alone, so `bonus_calculator.py` uses nothing else, rather
+than inventing a level- or points-based adjustment you never asked for.
+
+### The WhatsApp message — one deliberate wording change
+
+You proposed:
+> Dear {Name},
+>
+> ₹{Bonus Amount} has been created to your wallet.
+> Please enjoy the game!
+
+This app has **no wallet or credit API anywhere** — nothing in this
+codebase, or in Supabase, actually credits a wallet. Per your own caveat
+("only say it was created to a wallet if there's a real wallet API;
+otherwise store/display the amount and keep the wording configurable"),
+the shipped default instead reads:
+
+```
+Dear Rahul,
+
+Your bonus amount is ₹30.
+Please enjoy the game!
+```
+
+Same greeting, same bonus figure, same closing line — the only change is
+not claiming a wallet credit that doesn't exist. The wording stays fully
+configurable via the `WHATSAPP_MESSAGE_TEMPLATE` environment variable (see
+`app/services/whatsapp_templates.py`), so switching to your exact proposed
+wording is a one-line env change whenever a real wallet API exists to
+back it up.
+
+### Error handling
+
+| Case | Behavior |
+|---|---|
+| Missing user name | Row skipped at extraction, reported in `warnings` |
+| Missing WhatsApp number | Bonus still calculated and saved; `send-whatsapp` reports `skipped_no_number` for that user |
+| Invalid (unparseable) Profit/Loss | Row skipped at extraction, reported in `warnings` — never silently dropped, never guessed |
+| Invalid PDF data (any numeric field) | Same as above — the row is set aside with a reason, not the whole upload |
+| Duplicate user within one report | The 2nd insert for the same `(report_id, user_id)` violates `bonus_results`'s existing unique constraint; recorded as a warning, first row's data untouched |
+| Same user across multiple reports | Matched by name via `get_or_create_user()` (existing Step 3 behavior) — same user record reused, not duplicated |
+| WhatsApp send failure | Recorded as `status="failed"` with the provider's error, saved to `whatsapp_messages`; never stops the rest of the report |
+| No bonus owed (₹0) | WhatsApp send is skipped (`skipped_no_bonus`) — no message sent for a zero bonus |
+
+### Test results (against your exact sample data)
+
+Ran the full Admin → PDF → Bonus → WhatsApp flow through the real,
+unmodified FastAPI app (via `TestClient`) against a synthetic PDF built
+with your own sample rows, using a fake in-memory Supabase client (no live
+Supabase project available in this environment) and a faked WhatsApp send
+call (no live credentials). All of the following passed:
+
+1. **PDF extraction:** WhatsApp Number extracted correctly for 3 of 4
+   valid users (Rahul, Amit, Priya); the 4th (`NoPhoneUser`) correctly
+   extracted with `whatsapp_number = null` from a blank cell. A 5th row
+   with an unparseable Profit/Loss cell was correctly skipped with a
+   warning, never crashing the upload or silently vanishing.
+2. **Bonus calculation:** Rahul (-1000) → **30**, Amit (-2500) → **75**,
+   Priya (+500) → **0**, NoPhoneUser (-400) → **12** — all matching hand
+   calculation. Also directly unit-tested `calculate_bonus()` against all
+   three of your original examples (-1000→30, -2500→75, -5000→150) and
+   the +500/0 boundary case.
+3. **Database saving:** all 4 rows persisted to `bonus_results` with
+   `calculation_status="calculated"`, correct `whatsapp_number` (or
+   `null` for NoPhoneUser), and the right `bonus_amount` — confirmed by
+   reading straight from the (fake) database, not just the API response.
+4. **WhatsApp flow:** Rahul and Amit → `sent`, each with a message
+   containing their exact bonus amount and no wallet-credit claim; Priya
+   → `skipped_no_bonus` (₹0 owed); NoPhoneUser → `skipped_no_number`.
+   Re-fetching `GET /results` afterward showed `whatsapp_status` updated
+   to `"sent"` for Rahul/Amit and staying `"not_sent"` for the other two.
+5. **Duplicate handling:** re-uploading the identical PDF reused the same
+   4 user records (matched by name) rather than creating duplicates; a
+   second row for the same user within one PDF was correctly rejected by
+   the database's unique constraint and reported as a warning.
+6. **Full flow confirmed working end to end:** Upload → (WhatsApp Number
+   extracted) → Validate → Calculate (real formula) → Save → `GET
+   /results` (all 5 admin columns present) → Send WhatsApp (correct
+   eligibility gate) → `GET /results` again (status reflects the send).
+
+**Not yet tested:** a real WhatsApp send (no live Meta credentials in this
+environment) and your actual production PDF (only synthetic test data
+built from your sample numbers was available here).
+
 ## Deploying to Railway
 
 1. Push this project to a GitHub repository.
@@ -788,24 +954,23 @@ UI, which lists every available endpoint.
   with direct unit tests covering every rule, including deliberately
   invalid rows; **not yet run against real Supabase data or the client's
   real PDF**.
-- **Steps 5-6 complete (pipeline only):** `POST
+- **Steps 5-6 complete:** `POST
   /api/v1/reports/{report_id}/calculate-bonus`, `GET .../results`, `GET
   .../results/{user_id}` — full validate → calculate → save → retrieve
-  pipeline built, gated on report status, tolerant of per-row failures.
-  Verified with a temporary test-only formula against a fake Supabase
-  client. **The client's actual bonus formula is still missing** —
-  `app/services/bonus_calculator.py` is a clearly marked placeholder that
-  refuses to guess and returns `501` until it's filled in.
+  pipeline, gated on report status, tolerant of per-row failures. The
+  client's real bonus formula is now implemented (see "Actual Bonus
+  Feature" below) — no longer a placeholder.
 - **Step 7 complete:** `POST /api/v1/reports/{report_id}/send-whatsapp` —
-  sends each calculated user's bonus summary via Meta's WhatsApp Cloud API
-  (the assumed default provider), records success/failure per message in a
-  new `whatsapp_messages` table, and skips anyone already successfully
+  sends each eligible user's bonus via Meta's WhatsApp Cloud API (the
+  assumed default provider), records success/failure per message in a
+  `whatsapp_messages` table, and skips anyone already successfully
   notified unless `force=true`. Verified: schema against real Postgres,
   full pipeline (idempotency, missing-number handling, partial failure)
   against a mocked client, and HTTP error paths on a running server.
-  **The message wording is a default template pending client confirmation,
-  and no real message has been sent** (no live WhatsApp credentials, and
-  Meta's API is outside this environment's network access).
+  **No real message has been sent** (no live WhatsApp credentials, and
+  Meta's API is outside this environment's network access) — the message
+  wording itself is now the client's own confirmed content, minus the one
+  deliberate change explained in "Actual Bonus Feature" below.
 
 - **Step 8 complete:** Flutter frontend (`numberspeaks_app/`, delivered as
   its own zip) — all 6 screens, calling this backend's real endpoints only,
@@ -824,13 +989,18 @@ UI, which lists every available endpoint.
   this backend or the Flutter app ever sets `users.whatsapp_number` (the
   report has no phone-number column) — `send-whatsapp` will report
   everyone as `skipped_no_number` until that's populated some other way
-  (today: a direct edit in Supabase). Not fixed here — out of scope for an
-  integration/testing step — but flagged for you before deployment.
+  (today: a direct edit in Supabase). **Fixed by the Actual Bonus Feature
+  update below** — the PDF itself now carries a WhatsApp Number column, so
+  it's populated automatically on every upload, same as every other field.
+- **Actual Bonus Feature complete:** see the dedicated section below for
+  the full explanation, the exact test results, and the one deliberate
+  wording deviation from your proposed WhatsApp message (flagged per your
+  own stated caveat).
 
 Ready for manual deployment (Railway), per your instruction not to deploy
 here. The recurring gap across every step so far: no real client PDF, no
-confirmed bonus formula, no confirmed WhatsApp wording/provider, no live
-Supabase/WhatsApp credentials, and (new) no way yet to populate
-`whatsapp_number` — all pending from your side before true production
-end-to-end testing (with real data, a real formula, and a real WhatsApp
-send) is possible.
+live Supabase/WhatsApp credentials, and no real WhatsApp send performed —
+all pending from your side before true production end-to-end testing (with
+real data and a real WhatsApp send) is possible. The bonus formula and
+WhatsApp message wording are no longer open questions — both are now
+implemented per your confirmed spec.

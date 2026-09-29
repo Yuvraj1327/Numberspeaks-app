@@ -2,24 +2,31 @@
 Bonus calculation — the client's formula lives here, and ONLY here.
 
 This module is deliberately isolated from everything else (extraction,
-validation, Supabase, the API layer) so that dropping in the real formula
-later never requires touching any other file.
+validation, Supabase, the API layer), so nothing outside this file needed
+to change when the real formula below was implemented.
 
-STATUS: the client has not provided the bonus formula yet. calculate_bonus()
-below intentionally raises BonusFormulaNotConfiguredError instead of
-guessing — no placeholder math, no invented percentages, nothing. Every
-other piece of Steps 5-6 (the API, the save-to-Supabase logic, the results
-endpoints) is fully built and wired to this function; the moment the real
-formula is implemented here, the whole pipeline works end to end with no
-other code changes.
+CLIENT FORMULA (confirmed):
+    Only a LOSS earns a bonus. If profit_loss is negative:
+        bonus = abs(profit_loss) * 3%
+    If profit_loss is zero or positive: bonus = 0.
+
+    Examples given by the client:
+        -1000 -> 30
+        -2500 -> 75
+        -5000 -> 150
 """
 
 from dataclasses import dataclass
 from typing import Optional
 
 
+BONUS_RATE = 0.03  # 3%, per the client's confirmed formula
+
+
 class BonusFormulaNotConfiguredError(Exception):
-    """Raised by calculate_bonus() until the client's real formula is implemented."""
+    """Raised by calculate_bonus() if the formula is ever disabled again via
+    is_formula_configured(); kept so callers don't need to change if that
+    happens."""
 
 
 @dataclass
@@ -41,44 +48,21 @@ def is_formula_configured() -> bool:
     The rest of the app checks this before attempting a calculation, so a
     missing formula fails with one clear message instead of raising the
     same exception once per user in a loop.
-
-    Flip this to True in the same change that implements calculate_bonus().
     """
-    return False
+    return True
 
 
 def calculate_bonus(data: BonusInput) -> float:
     """
-    ============================================================================
-    CLIENT BONUS FORMULA — NOT YET PROVIDED. DO NOT GUESS AT ONE.
-    ============================================================================
-    Replace the body of this function with the client's exact bonus
-    formula once they provide it. Nothing in this file should be
-    invented — if a rule isn't confirmed by the client, it doesn't belong
-    here.
+    Client's confirmed formula — only a loss earns a bonus:
+        profit_loss < 0  ->  bonus = abs(profit_loss) * 3%
+        profit_loss >= 0 ->  bonus = 0
 
-    Available inputs (one user, one report):
-        data.user_name        str             e.g. "Rahul Sharma"
-        data.level             str | None      e.g. "Master", "Super Master"
-        data.casino_pts        float           can be negative, zero, or positive
-        data.sport_pts         float           can be negative, zero, or positive
-        data.third_party_pts   float           can be negative, zero, or positive
-        data.profit_loss       float           can be negative, zero, or positive
-        data.ptype              str | None      e.g. "User", "Admin"
-
-    Must return:
-        float — the bonus amount for this user. Return 0.0 for "no bonus",
-        never None (None means "not yet calculated" elsewhere in this app).
-
-    Once implemented:
-        1. Remove the `raise` below and the docstring's warning banner.
-        2. Change is_formula_configured() above to return True.
-        3. If the formula differs by `level` or `ptype`, branch on those
-           fields explicitly here — don't scatter formula logic elsewhere.
-    ============================================================================
+    `level`, `casino_pts`, `sport_pts`, `third_party_pts` and `ptype` are
+    not part of this formula — the client's rule is based on profit_loss
+    alone, so nothing else on BonusInput is used here. Always returns a
+    float (0.0 for "no bonus"), never None.
     """
-    raise BonusFormulaNotConfiguredError(
-        "No bonus formula has been configured yet. Implement calculate_bonus() "
-        "in app/services/bonus_calculator.py with the client's exact formula, "
-        "then set is_formula_configured() in the same file to return True."
-    )
+    if data.profit_loss < 0:
+        return round(abs(data.profit_loss) * BONUS_RATE, 2)
+    return 0.0

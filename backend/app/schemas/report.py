@@ -16,6 +16,9 @@ class ExtractedRecord(BaseModel):
 
     no: Optional[int] = Field(None, description="Row number from the 'No' column")
     user_name: str = Field(..., description="From the 'User Name' column")
+    whatsapp_number: Optional[str] = Field(
+        None, description="From the 'WhatsApp Number' column"
+    )
     level: Optional[str] = Field(None, description="From the 'Level' column")
     casino_pts: float = Field(..., description="From the 'Casino Pts' column")
     sport_pts: float = Field(..., description="From the 'Sport Pts' column")

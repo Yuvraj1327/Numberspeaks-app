@@ -27,7 +27,7 @@ def get_report(db: Client, report_id: str) -> Optional[dict]:
 
 BONUS_RESULT_SELECT = (
     "id, report_id, user_id, casino_pts, sport_pts, third_party_pts, "
-    "profit_loss, ptype, bonus_amount, created_at, "
+    "profit_loss, ptype, bonus_amount, calculation_status, created_at, "
     "users(id, name, level, whatsapp_number)"
 )
 
@@ -61,12 +61,25 @@ def get_bonus_result_for_user(db: Client, report_id: str, user_id: str) -> Optio
 
 
 def update_bonus_amount(db: Client, bonus_result_id: str, bonus_amount: float) -> None:
-    db.table("bonus_results").update({"bonus_amount": bonus_amount}).eq("id", bonus_result_id).execute()
+    db.table("bonus_results").update(
+        {"bonus_amount": bonus_amount, "calculation_status": "calculated"}
+    ).eq("id", bonus_result_id).execute()
+
+
+def update_calculation_status(db: Client, bonus_result_id: str, status: str) -> None:
+    """
+    Marks a row's calculation_status directly, without touching
+    bonus_amount — used for rows that failed validation (status='invalid')
+    so the failure is saved durably instead of only reported in-memory.
+    """
+    db.table("bonus_results").update({"calculation_status": status}).eq(
+        "id", bonus_result_id
+    ).execute()
 
 
 def bonus_result_row_to_raw(row: dict) -> dict:
     """
-    Reshapes a joined bonus_results+users row back into the report's 8
+    Reshapes a joined bonus_results+users row back into the report's 9
     columns, for re-running through the same validator Step 4 uses. Keeps
     the row's own id under a private key so callers can trace back to it
     without that id leaking into any user-facing 'raw' output.
@@ -75,6 +88,7 @@ def bonus_result_row_to_raw(row: dict) -> dict:
     return {
         "no": None,  # not persisted — it's the PDF's own row number, not a DB concept
         "user_name": user.get("name"),
+        "whatsapp_number": user.get("whatsapp_number"),
         "level": user.get("level"),
         "casino_pts": row.get("casino_pts"),
         "sport_pts": row.get("sport_pts"),
@@ -86,20 +100,47 @@ def bonus_result_row_to_raw(row: dict) -> dict:
     }
 
 
+def get_latest_whatsapp_status(db: Client, bonus_result_id: str) -> Optional[str]:
+    """
+    The most recent WhatsApp send attempt's status for one bonus_results
+    row ('sent' or 'failed' — 'pending' rows are never left behind by
+    whatsapp_service.py), or None if no attempt has been made yet.
+    Powers the admin "WhatsApp Status" column (see to_bonus_result).
+    """
+    res = (
+        db.table("whatsapp_messages")
+        .select("status, created_at")
+        .eq("bonus_result_id", bonus_result_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0]["status"] if res.data else None
+
+
 def default_row_reference(raw: dict, index: int) -> str:
     name = raw.get("user_name") or "unknown user"
     record_id = raw.get("_bonus_result_id")
     return f"user={name!r}, bonus_result_id={record_id}" if record_id else f"row {index + 1}, user={name!r}"
 
 
-def to_bonus_result(row: dict) -> BonusResult:
-    """Converts one joined bonus_results+users row into the API schema."""
+def to_bonus_result(row: dict, whatsapp_status: Optional[str] = None) -> BonusResult:
+    """
+    Converts one joined bonus_results+users row into the API schema.
+
+    `whatsapp_status` is passed in by the caller (rather than looked up
+    here) because callers differ: right after a fresh calculation no send
+    has happened yet, so it's correctly left as the default "not_sent";
+    the /results endpoints look it up per row via
+    get_latest_whatsapp_status() before calling this.
+    """
     user = row.get("users") or {}
     return BonusResult(
         bonus_result_id=row["id"],
         report_id=row["report_id"],
         user_id=row.get("user_id") or user.get("id"),
         user_name=user.get("name", ""),
+        whatsapp_number=user.get("whatsapp_number"),
         level=user.get("level"),
         casino_pts=row.get("casino_pts", 0.0),
         sport_pts=row.get("sport_pts", 0.0),
@@ -107,6 +148,8 @@ def to_bonus_result(row: dict) -> BonusResult:
         profit_loss=row.get("profit_loss", 0.0),
         ptype=row.get("ptype"),
         bonus_amount=row.get("bonus_amount"),
+        calculation_status=row.get("calculation_status") or "pending",
+        whatsapp_status=whatsapp_status or "not_sent",
         created_at=row.get("created_at"),
     )
 
@@ -145,24 +188,41 @@ def upload_pdf_to_storage(db: Client, report_id: str, file_name: str, file_bytes
     return storage_path
 
 
-def get_or_create_user(db: Client, name: str, level: Optional[str]) -> str:
+def get_or_create_user(
+    db: Client, name: str, level: Optional[str], whatsapp_number: Optional[str] = None
+) -> str:
     """
     Finds an existing user by exact name match, or creates one.
 
     Matching by name (rather than generating a new user per report) keeps
     the same person's bonus history linked across multiple report uploads.
-    If a match is found and the report shows a different level, the
-    user's level is updated to the latest value.
+    If a match is found and the report shows a different level or WhatsApp
+    number, that field is updated to the latest value from the report.
     """
-    existing = db.table("users").select("id, level").eq("name", name).limit(1).execute()
+    existing = (
+        db.table("users")
+        .select("id, level, whatsapp_number")
+        .eq("name", name)
+        .limit(1)
+        .execute()
+    )
 
     if existing.data:
         user_id = existing.data[0]["id"]
+        updates = {}
         if level and existing.data[0].get("level") != level:
-            db.table("users").update({"level": level}).eq("id", user_id).execute()
+            updates["level"] = level
+        if whatsapp_number and existing.data[0].get("whatsapp_number") != whatsapp_number:
+            updates["whatsapp_number"] = whatsapp_number
+        if updates:
+            db.table("users").update(updates).eq("id", user_id).execute()
         return user_id
 
-    inserted = db.table("users").insert({"name": name, "level": level}).execute()
+    inserted = (
+        db.table("users")
+        .insert({"name": name, "level": level, "whatsapp_number": whatsapp_number})
+        .execute()
+    )
     return inserted.data[0]["id"]
 
 
@@ -182,7 +242,9 @@ def save_extracted_records(
 
     for record in records:
         try:
-            user_id = get_or_create_user(db, record.user_name, record.level)
+            user_id = get_or_create_user(
+                db, record.user_name, record.level, record.whatsapp_number
+            )
             db.table("bonus_results").insert({
                 "report_id": report_id,
                 "user_id": user_id,

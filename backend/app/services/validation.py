@@ -94,7 +94,14 @@ def validate_record(raw: Dict[str, RawValue], row_reference: str) -> Optional[Un
         numeric_values[field_name] = parsed
 
     if issues:
-        public_fields = ["no", "user_name", "level", *REQUIRED_NUMERIC_FIELDS, "ptype"]
+        public_fields = [
+            "no",
+            "user_name",
+            "whatsapp_number",
+            "level",
+            *REQUIRED_NUMERIC_FIELDS,
+            "ptype",
+        ]
         return InvalidRecord(
             row_reference=row_reference,
             raw={f: (None if raw.get(f) is None else str(raw.get(f))) for f in public_fields},
@@ -110,6 +117,7 @@ def validate_record(raw: Dict[str, RawValue], row_reference: str) -> Optional[Un
     return ExtractedRecord(
         no=no_parsed,
         user_name=user_name,
+        whatsapp_number=_to_text(raw.get("whatsapp_number")) or None,
         level=_to_text(raw.get("level")) or None,
         casino_pts=numeric_values["casino_pts"],
         sport_pts=numeric_values["sport_pts"],

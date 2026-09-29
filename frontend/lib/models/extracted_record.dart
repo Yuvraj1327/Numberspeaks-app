@@ -4,6 +4,7 @@
 class ExtractedRecord {
   final int? no;
   final String userName;
+  final String? whatsappNumber;
   final String? level;
   final double casinoPts;
   final double sportPts;
@@ -15,6 +16,7 @@ class ExtractedRecord {
   const ExtractedRecord({
     required this.no,
     required this.userName,
+    required this.whatsappNumber,
     required this.level,
     required this.casinoPts,
     required this.sportPts,
@@ -28,6 +30,7 @@ class ExtractedRecord {
     return ExtractedRecord(
       no: json['no'] as int?,
       userName: json['user_name'] as String? ?? '',
+      whatsappNumber: json['whatsapp_number'] as String?,
       level: json['level'] as String?,
       casinoPts: _toDouble(json['casino_pts']),
       sportPts: _toDouble(json['sport_pts']),
