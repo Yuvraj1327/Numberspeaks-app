@@ -23,10 +23,13 @@ from app.schemas.bonus import BonusCalculationSummary, BonusResult
 from app.services.bonus_calculator import BonusFormulaNotConfiguredError
 from app.services.bonus_service import run_bonus_calculation
 from app.services.reports_service import (
+    ACTIVE_STATUSES,
     get_bonus_result_for_user,
     get_bonus_results_for_report,
     get_latest_whatsapp_status,
     get_report,
+    latest_whatsapp_status_of_row,
+    safe_error,
     to_bonus_result,
     update_report_status,
 )
@@ -63,9 +66,19 @@ def _get_report_or_404(db, report_id: str) -> dict:
     response_model=BonusCalculationSummary,
     summary="Calculate and save the bonus for every user in a validated report",
 )
-async def calculate_bonus_for_report(report_id: str) -> BonusCalculationSummary:
+def calculate_bonus_for_report(report_id: str) -> BonusCalculationSummary:
     db = _get_db()
     report = _get_report_or_404(db, report_id)
+
+    if report.get("status") in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This report is still being processed in the background "
+                f"(current status: {report.get('status')!r}). "
+                f"Check GET /api/v1/reports/{report_id}/status."
+            ),
+        )
 
     if report.get("status") != "validated":
         raise HTTPException(
@@ -118,28 +131,26 @@ async def calculate_bonus_for_report(report_id: str) -> BonusCalculationSummary:
     response_model=list[BonusResult],
     summary="Get bonus results for a report",
 )
-async def get_report_results(report_id: str) -> list[BonusResult]:
+def get_report_results(report_id: str) -> list[BonusResult]:
     db = _get_db()
     _get_report_or_404(db, report_id)
 
     try:
-        rows = get_bonus_results_for_report(db, report_id)
+        # The latest WhatsApp status of every row comes back in the same
+        # request; if that table isn't available, fall back to plain rows.
+        try:
+            rows = get_bonus_results_for_report(db, report_id, include_whatsapp=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read WhatsApp status for report %s: %s", report_id, safe_error(exc))
+            rows = get_bonus_results_for_report(db, report_id)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to load results for report %s", report_id)
+        logger.error("Failed to load results for report %s: %s", report_id, safe_error(exc))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Could not read this report's results: {exc}",
+            detail="Could not read this report's results.",
         ) from exc
 
-    results = []
-    for row in rows:
-        try:
-            wa_status = get_latest_whatsapp_status(db, row["id"])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not read WhatsApp status for bonus_result %s: %s", row["id"], exc)
-            wa_status = None
-        results.append(to_bonus_result(row, whatsapp_status=wa_status))
-    return results
+    return [to_bonus_result(row, whatsapp_status=latest_whatsapp_status_of_row(row)) for row in rows]
 
 
 @router.get(
@@ -147,7 +158,7 @@ async def get_report_results(report_id: str) -> list[BonusResult]:
     response_model=BonusResult,
     summary="Get one user's bonus result for a report",
 )
-async def get_user_result(report_id: str, user_id: str) -> BonusResult:
+def get_user_result(report_id: str, user_id: str) -> BonusResult:
     db = _get_db()
     _get_report_or_404(db, report_id)
 

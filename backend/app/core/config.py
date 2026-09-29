@@ -35,6 +35,20 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
 
+    # --- Report processing ---
+    # Largest PDF accepted by POST /reports/upload.
+    MAX_UPLOAD_MB: int = 50
+    # How many reports are processed at the same time in this process; the
+    # rest wait their turn (status stays "uploaded"). Keeps memory bounded
+    # when many users upload at once.
+    MAX_CONCURRENT_REPORT_JOBS: int = 2
+    # Rows per bulk Supabase insert/upsert request.
+    DB_BATCH_SIZE: int = 500
+    # A report that has been in a processing state this long without any
+    # progress is treated as abandoned (e.g. the server restarted mid-job)
+    # and is picked up again the next time its status is requested.
+    PROCESSING_STALE_SECONDS: int = 600
+
     # --- WhatsApp ---
     # Default provider is Meta's WhatsApp Cloud API (the official WhatsApp
     # Business Platform API) — no specific provider was given, and this is

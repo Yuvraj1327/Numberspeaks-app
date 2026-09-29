@@ -6,13 +6,14 @@ This is the glue between validation (Step 4), the pure formula
 logic itself, and it does not talk to Supabase for anything beyond saving
 the result of a calculation that already happened.
 
-Each row is validated, calculated, and saved independently: one bad or
-failed row is recorded as an error and skipped, it never stops the rest
-of the report from being calculated.
+Each row is validated and calculated independently in memory: one bad
+row is recorded as an error and skipped, it never stops the rest of the
+report from being calculated. The results are then written to Supabase in
+bulk (one request per batch of rows), not one request per row.
 """
 
 import logging
-from typing import List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from supabase import Client
 
@@ -21,10 +22,10 @@ from app.schemas.validation import InvalidRecord
 from app.services.bonus_calculator import BonusFormulaNotConfiguredError, BonusInput, calculate_bonus, is_formula_configured
 from app.services.reports_service import (
     bonus_result_row_to_raw,
+    bulk_update_bonus_results,
     default_row_reference,
+    safe_error,
     to_bonus_result,
-    update_bonus_amount,
-    update_calculation_status,
 )
 from app.services.validation import validate_record
 
@@ -32,7 +33,9 @@ logger = logging.getLogger("numberspeaks")
 
 
 def run_bonus_calculation(
-    db: Client, rows: List[dict]
+    db: Client,
+    rows: List[dict],
+    heartbeat: Optional[Callable[[], None]] = None,
 ) -> Tuple[int, List[BonusResult], List[BonusCalculationError]]:
     """
     Validates, calculates, and saves a bonus for each row.
@@ -48,9 +51,9 @@ def run_bonus_calculation(
             "in the same file to return True."
         )
 
-    results: List[BonusResult] = []
     errors: List[BonusCalculationError] = []
-    calculated = 0
+    to_calculate: List[Tuple[dict, float]] = []  # (row, bonus amount)
+    invalid_rows: List[dict] = []
 
     for row in rows:
         user = row.get("users") or {}
@@ -72,14 +75,7 @@ def run_bonus_calculation(
                     bonus_result_id=bonus_result_id, user_name=user_name, issues=outcome.issues
                 )
             )
-            if bonus_result_id:
-                try:
-                    update_calculation_status(db, bonus_result_id, "invalid")
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Could not persist 'invalid' status for row %s: %s",
-                        bonus_result_id, exc,
-                    )
+            invalid_rows.append(row)
             continue
 
         bonus_input = BonusInput(
@@ -97,40 +93,63 @@ def run_bonus_calculation(
         except BonusFormulaNotConfiguredError:
             raise
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Bonus calculation failed for row %s: %s", bonus_result_id, exc)
+            logger.warning("Bonus calculation failed for row %s: %s", bonus_result_id, safe_error(exc))
             errors.append(
                 BonusCalculationError(
                     bonus_result_id=bonus_result_id,
                     user_name=user_name,
-                    issues=[f"Calculation failed: {exc}"],
+                    issues=[f"Calculation failed: {safe_error(exc)}"],
                 )
             )
-            if bonus_result_id:
-                try:
-                    update_calculation_status(db, bonus_result_id, "invalid")
-                except Exception as status_exc:  # noqa: BLE001
-                    logger.warning(
-                        "Could not persist 'invalid' status for row %s: %s",
-                        bonus_result_id, status_exc,
-                    )
+            invalid_rows.append(row)
             continue
 
-        try:
-            update_bonus_amount(db, bonus_result_id, amount)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not save bonus for row %s: %s", bonus_result_id, exc)
+        to_calculate.append((row, amount))
+
+    # --- Save: one bulk request per batch, not one per row ------------------
+    def key_fields(row: dict) -> dict:
+        return {
+            "id": row["id"],
+            "report_id": row["report_id"],
+            "user_id": row.get("user_id") or (row.get("users") or {}).get("id"),
+        }
+
+    if invalid_rows:
+        failed_invalid = bulk_update_bonus_results(
+            db,
+            [{**key_fields(row), "calculation_status": "invalid"} for row in invalid_rows],
+            heartbeat,
+        )
+        if failed_invalid:
+            logger.warning("Could not persist 'invalid' status for %d rows", len(failed_invalid))
+
+    failed_ids = set()
+    if to_calculate:
+        failed = bulk_update_bonus_results(
+            db,
+            [
+                {**key_fields(row), "bonus_amount": amount, "calculation_status": "calculated"}
+                for row, amount in to_calculate
+            ],
+            heartbeat,
+        )
+        failed_ids = {change["id"] for change in failed}
+        if failed_ids:
+            logger.warning("Could not save bonus for %d rows", len(failed_ids))
+
+    results: List[BonusResult] = []
+    for row, amount in to_calculate:
+        if row["id"] in failed_ids:
             errors.append(
                 BonusCalculationError(
-                    bonus_result_id=bonus_result_id,
-                    user_name=user_name,
-                    issues=[f"Calculated ({amount}) but could not be saved: {exc}"],
+                    bonus_result_id=row["id"],
+                    user_name=(row.get("users") or {}).get("name"),
+                    issues=[f"Calculated ({amount}) but could not be saved"],
                 )
             )
             continue
-
-        calculated += 1
         row["bonus_amount"] = amount
         row["calculation_status"] = "calculated"
         results.append(to_bonus_result(row))
 
-    return calculated, results, errors
+    return len(results), results, errors

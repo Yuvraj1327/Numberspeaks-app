@@ -674,6 +674,59 @@ without a live call:
 WhatsApp Business credentials), and the `404`/`409` paths against a real
 report — same live-credentials gap as every other step so far.
 
+## Background report processing
+
+`POST /api/v1/reports/upload` no longer does the work inside the HTTP
+request. It only checks the file is a PDF, stores it in Supabase Storage,
+creates the `reports` row, queues the report and returns `202` with the
+report id — in milliseconds, whatever the PDF's size. A client timeout can
+therefore no longer be confused with a processing failure, and closing the
+app never stops or fails a report.
+
+```
+POST /reports/upload  ->  202 { report_id, status: "uploaded" }
+                            |
+                            v   (background worker, app/services/report_processor.py)
+uploaded -> processing   download PDF, extract every page, save users + bonus_results in bulk
+         -> validating   read rows back, run the existing validation
+         -> calculating  existing 3%-of-a-loss formula, saved in bulk
+         -> completed | failed
+
+GET /reports/{id}/status   -> { status, is_final, pages_processed, total_records,
+                                calculated_count, failed_count, error_message, warnings, ... }
+GET /reports/{id}/results  -> the per-user rows (once status is "completed")
+```
+
+Poll `/status` every couple of seconds until `is_final` is `true`. A
+`failed` report carries a user-safe `error_message`.
+
+- **Bulk database work.** Users are looked up 100 names per request, new
+  users are inserted and changed users updated in batches, and
+  `bonus_results` are saved and updated in batches of `DB_BATCH_SIZE` (500).
+  For the client's 174-user report that is about 17 Supabase requests
+  instead of 872. If a batch is rejected it is retried row by row, so one
+  bad row costs only itself.
+- **No duplicate processing.** A worker must first claim the report with an
+  atomic compare-and-swap on `(status, attempts)`; a second upload
+  handler, worker or retry loses and does nothing. The legacy
+  `/validate` and `/calculate-bonus` endpoints answer `409` while a
+  background job owns the report.
+- **Bounded load.** At most `MAX_CONCURRENT_REPORT_JOBS` (2) reports are
+  processed at once per instance; the rest wait as `uploaded`. PDF pages
+  are released as they are read, and results are read in pages of 1000
+  (Supabase never returns more per request).
+- **Restart safety.** Every stage updates the report row
+  (`reports.updated_at`). A report that has not changed for
+  `PROCESSING_STALE_SECONDS` (600) is presumed abandoned (e.g. a deploy
+  restarted the server mid-job) and is resumed the next time its status is
+  requested — at most 3 attempts, then it is marked `failed`.
+- **Logging.** Logs contain report ids, counts, timings and error types
+  only — never PDF contents, names, phone numbers or amounts.
+
+Tests: `venv/bin/python -m unittest tests.test_report_pipeline -v` (runs the
+whole pipeline against an in-memory Supabase fake, including the client's
+PDF if it is at `~/Downloads/Party Profit Loss (1).pdf` or `CLIENT_PDF`).
+
 ## Local setup
 
 ### 1. Create and activate a virtual environment
@@ -699,6 +752,9 @@ pip install -r requirements.txt
    Storage bucket that uploaded PDFs are saved into.
 4. Run `supabase/whatsapp_schema.sql` the same way to create the
    `whatsapp_messages` table used by Step 7.
+   Then run `supabase/processing_status_schema.sql` to add the status
+   tracking that background report processing needs (**required** — uploads
+   will stay at `uploaded` without it).
 5. In **Project Settings → API**, copy:
    - **Project URL** → this is `SUPABASE_URL`.
    - **service_role secret key** → this is `SUPABASE_KEY`.

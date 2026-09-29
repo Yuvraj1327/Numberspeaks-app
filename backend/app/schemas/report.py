@@ -31,6 +31,13 @@ class ExtractedRecord(BaseModel):
 
 
 class UploadReportResponse(BaseModel):
+    """
+    Returned by POST /reports/upload as soon as the file is stored.
+    Extraction happens in the background, so pages_processed/total_records/
+    records are empty here — poll GET /reports/{report_id}/status, then read
+    GET /reports/{report_id}/results.
+    """
+
     report_id: str
     file_name: str
     status: str
@@ -41,3 +48,29 @@ class UploadReportResponse(BaseModel):
         default_factory=list,
         description="Rows or pages that were skipped during extraction/saving, and why.",
     )
+
+
+class ReportStatusResponse(BaseModel):
+    """
+    Progress of a report being processed in the background — what the
+    client polls after upload.
+
+    status: uploaded -> processing -> validating -> calculating ->
+    completed | failed. ('validated' only appears on reports driven
+    through the manual /validate + /calculate-bonus endpoints.)
+    """
+
+    report_id: str
+    file_name: str
+    status: str
+    is_final: bool = Field(
+        description="True once status is 'completed' or 'failed' — stop polling."
+    )
+    pages_processed: int = 0
+    total_records: int = Field(0, description="Rows saved from the PDF.")
+    calculated_count: int = 0
+    failed_count: int = Field(0, description="Rows that failed validation or calculation.")
+    error_message: Optional[str] = Field(None, description="Why the report failed, if it did.")
+    warnings: List[str] = Field(default_factory=list)
+    uploaded_at: Optional[str] = None
+    updated_at: Optional[str] = None

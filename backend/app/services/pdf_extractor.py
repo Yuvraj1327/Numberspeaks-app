@@ -16,7 +16,7 @@ which adds WhatsApp Number as a required-when-available column):
 import io
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import pdfplumber
 
@@ -223,9 +223,16 @@ def _extract_page_table(page: "pdfplumber.page.Page") -> Optional[List[List[Opti
     return None
 
 
-def extract_records_from_pdf(file_bytes: bytes) -> ExtractionResult:
+def extract_records_from_pdf(
+    file_bytes: bytes,
+    on_page_done: Optional[Callable[[int, int], None]] = None,
+) -> ExtractionResult:
     """
     Reads every page of the PDF and returns structured records.
+
+    `on_page_done(pages_done, total_pages)`, if given, is called after each
+    page so a long-running caller can report progress; it does not affect
+    what is extracted.
 
     Raises PdfExtractionError if the file can't be opened as a PDF, or if
     no table data could be found on any page.
@@ -249,6 +256,12 @@ def extract_records_from_pdf(file_bytes: bytes) -> ExtractionResult:
             for page_number, page in enumerate(pdf.pages, start=1):
                 result.pages_processed += 1
                 table = _extract_page_table(page)
+                # Release this page's parsed layout so memory stays flat on
+                # PDFs with many pages.
+                page.flush_cache()
+
+                if on_page_done:
+                    on_page_done(page_number, len(pdf.pages))
 
                 if table is None:
                     result.warnings.append(
