@@ -77,8 +77,8 @@ def run_bonus_calculation(
                     update_calculation_status(db, bonus_result_id, "invalid")
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "Could not persist 'invalid' status for %r (row %s): %s",
-                        user_name, bonus_result_id, exc,
+                        "Could not persist 'invalid' status for row %s: %s",
+                        bonus_result_id, exc,
                     )
             continue
 
@@ -97,7 +97,7 @@ def run_bonus_calculation(
         except BonusFormulaNotConfiguredError:
             raise
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Bonus calculation failed for %r (row %s): %s", user_name, bonus_result_id, exc)
+            logger.warning("Bonus calculation failed for row %s: %s", bonus_result_id, exc)
             errors.append(
                 BonusCalculationError(
                     bonus_result_id=bonus_result_id,
@@ -110,15 +110,15 @@ def run_bonus_calculation(
                     update_calculation_status(db, bonus_result_id, "invalid")
                 except Exception as status_exc:  # noqa: BLE001
                     logger.warning(
-                        "Could not persist 'invalid' status for %r (row %s): %s",
-                        user_name, bonus_result_id, status_exc,
+                        "Could not persist 'invalid' status for row %s: %s",
+                        bonus_result_id, status_exc,
                     )
             continue
 
         try:
             update_bonus_amount(db, bonus_result_id, amount)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not save bonus for %r (row %s): %s", user_name, bonus_result_id, exc)
+            logger.warning("Could not save bonus for row %s: %s", bonus_result_id, exc)
             errors.append(
                 BonusCalculationError(
                     bonus_result_id=bonus_result_id,

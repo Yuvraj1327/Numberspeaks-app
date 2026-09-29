@@ -66,7 +66,7 @@ def send_whatsapp_message(to_number: str, message: str) -> WhatsAppSendResult:
     try:
         response = httpx.post(url, json=payload, headers=headers, timeout=15.0)
     except httpx.RequestError as exc:
-        logger.warning("WhatsApp request failed for %s: %s", number, exc)
+        logger.warning("WhatsApp request failed: %s", exc)
         return WhatsAppSendResult(success=False, error=f"Network error contacting WhatsApp API: {exc}")
 
     try:
@@ -76,7 +76,7 @@ def send_whatsapp_message(to_number: str, message: str) -> WhatsAppSendResult:
 
     if response.status_code >= 400:
         error_message = (body.get("error") or {}).get("message") or response.text or "Unknown error"
-        logger.warning("WhatsApp API returned %s for %s: %s", response.status_code, number, error_message)
+        logger.warning("WhatsApp API returned %s: %s", response.status_code, error_message)
         return WhatsAppSendResult(success=False, error=f"WhatsApp API error ({response.status_code}): {error_message}")
 
     message_id = None

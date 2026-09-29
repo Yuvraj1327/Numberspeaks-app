@@ -257,8 +257,8 @@ def save_extracted_records(
             saved += 1
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Failed to save bonus_results row for %r on report %s: %s",
-                record.user_name, report_id, exc,
+                "Failed to save bonus_results row (page %s) on report %s: %s",
+                record.source_page, report_id, exc,
             )
             warnings.append(
                 f"Could not save row for '{record.user_name}' "
