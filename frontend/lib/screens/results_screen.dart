@@ -15,16 +15,16 @@ import '../widgets/status_pill.dart';
 
 enum _SortOption { nameAsc, nameDesc, bonusHighLow, bonusLowHigh }
 
-/// Screen 5 — Bonus Results.
-///
-/// Uses GET /api/v1/reports/{report_id}/results. Also hosts the report-wide
-/// "Send WhatsApp" action (POST /send-whatsapp) — the backend only exposes
-/// a per-report send, not a per-user one, so that action lives here rather
+/// Results tab — bonus results for the device's latest report (see
+/// LocalReportStore/README — the backend has no "list reports" endpoint,
+/// only per-report GET /results). Also hosts the report-wide "Send
+/// WhatsApp" action (POST /send-whatsapp) — the backend only exposes a
+/// per-report send, not a per-user one, so that action lives here rather
 /// than on the User Detail screen (see README "known backend gaps").
 class ResultsScreen extends StatefulWidget {
-  final String reportId;
+  final void Function(int tabIndex) onSwitchTab;
 
-  const ResultsScreen({super.key, required this.reportId});
+  const ResultsScreen({super.key, required this.onSwitchTab});
 
   @override
   State<ResultsScreen> createState() => _ResultsScreenState();
@@ -33,6 +33,7 @@ class ResultsScreen extends StatefulWidget {
 class _ResultsScreenState extends State<ResultsScreen> {
   bool _loading = true;
   String? _errorMessage;
+  String? _reportId;
   List<BonusResult> _results = [];
   String _query = '';
   _SortOption _sort = _SortOption.nameAsc;
@@ -52,9 +53,14 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
     final repo = context.read<ReportRepository>();
     try {
-      final results = await repo.getResults(widget.reportId);
+      final reportId = await repo.getLastReportId();
+      List<BonusResult> results = [];
+      if (reportId != null) {
+        results = await repo.getResults(reportId);
+      }
       if (!mounted) return;
       setState(() {
+        _reportId = reportId;
         _results = results;
         _loading = false;
       });
@@ -91,10 +97,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 
   Future<void> _sendWhatsApp() async {
+    final reportId = _reportId;
+    if (reportId == null) return;
+
     setState(() => _sendingWhatsApp = true);
     final repo = context.read<ReportRepository>();
     try {
-      final summary = await repo.sendWhatsApp(widget.reportId);
+      final summary = await repo.sendWhatsApp(reportId);
       if (!mounted) return;
       setState(() => _sendingWhatsApp = false);
       _showWhatsAppSummary(summary.sentCount, summary.failedCount, summary.skippedCount);
@@ -130,37 +139,81 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Bonus Results')),
-      body: _buildBody(),
-    );
-  }
-
-  Widget _buildBody() {
     if (_loading) return const LoadingView();
     if (_errorMessage != null) {
       return ErrorView(message: _errorMessage!, onRetry: _load);
     }
+
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
+      child: Text(
+        'Bonus Results',
+        style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+      ),
+    );
+
+    if (_reportId == null) {
+      return Column(
+        children: [
+          Align(alignment: Alignment.centerLeft, child: header),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  const SizedBox(height: 80),
+                  const EmptyView(
+                    icon: Icons.fact_check_outlined,
+                    message: 'No report uploaded yet.\nUpload a report from the Reports tab to see results here.',
+                  ),
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: AppSpacing.md),
+                      child: OutlinedButton.icon(
+                        onPressed: () => widget.onSwitchTab(1),
+                        icon: const Icon(Icons.description_outlined),
+                        label: const Text('Go to Reports'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     if (_results.isEmpty) {
-      return RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 120),
-            EmptyView(message: 'No bonus results yet for this report.'),
-          ],
-        ),
+      return Column(
+        children: [
+          Align(alignment: Alignment.centerLeft, child: header),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const [
+                  SizedBox(height: 120),
+                  EmptyView(message: 'No bonus results yet for this report.'),
+                ],
+              ),
+            ),
+          ),
+        ],
       );
     }
 
     final visible = _filteredSorted;
+    final reportId = _reportId!;
 
     return Column(
       children: [
+        Align(alignment: Alignment.centerLeft, child: header),
         Padding(
           padding: const EdgeInsets.fromLTRB(
-              AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+              AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
           child: Row(
             children: [
               Expanded(
@@ -222,12 +275,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
                       // from GET /results, which is always present.
                       whatsAppStatus: context
                               .read<ReportRepository>()
-                              .sessionWhatsAppStatusFor(widget.reportId, visible[index].bonusResultId) ??
+                              .sessionWhatsAppStatusFor(reportId, visible[index].bonusResultId) ??
                           visible[index].whatsappStatus,
                       onTap: () => Navigator.of(context).pushNamed(
                         AppRoutes.userDetail,
                         arguments: UserDetailArgs(
-                          reportId: widget.reportId,
+                          reportId: reportId,
                           initialResult: visible[index],
                         ),
                       ),
@@ -251,7 +304,7 @@ class _ResultCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
@@ -277,13 +330,13 @@ class _ResultCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   'Level: ${result.level}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
                 ),
               ],
               const SizedBox(height: 2),
               Text(
                 'WhatsApp: ${result.whatsappNumber ?? 'Not on file'}',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
               ),
               const SizedBox(height: AppSpacing.sm),
               Row(

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../core/app_theme.dart';
 import '../repositories/auth_repository.dart';
 import '../routing/app_routes.dart';
+import '../widgets/app_logo.dart';
 
 /// Screen 1 — Login / Authorized Access.
 ///
@@ -61,8 +62,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(Icons.account_balance_wallet_outlined,
-                        size: 56, color: AppTheme.primary),
+                    const Center(child: AppLogo(size: 64)),
                     const SizedBox(height: AppSpacing.md),
                     Text(
                       'Numberspeaks',
@@ -121,9 +121,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     if (auth.lastError != null) ...[
                       const SizedBox(height: AppSpacing.md),
-                      Text(
+                      const Text(
                         'Invalid email or password. Please try again.',
-                        style: const TextStyle(color: AppTheme.danger),
+                        style: TextStyle(color: AppTheme.danger),
                         textAlign: TextAlign.center,
                       ),
                     ],

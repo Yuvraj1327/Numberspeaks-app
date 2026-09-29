@@ -8,6 +8,5 @@ class AppRoutes {
   static const String dashboard = '/dashboard';
   static const String upload = '/upload';
   static const String processing = '/processing';
-  static const String results = '/results';
   static const String userDetail = '/user-detail';
 }

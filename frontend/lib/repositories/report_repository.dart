@@ -103,4 +103,11 @@ class ReportRepository extends ChangeNotifier {
   Future<String?> getLastReportFileName() => _localStore.getLastReportFileName();
 
   Future<String?> getLastReportStatus() => _localStore.getLastReportStatus();
+
+  /// Clears the on-device "last report" convenience only — never touches
+  /// the backend. Used by the Settings screen's "Clear local data" action.
+  Future<void> clearLocalData() async {
+    await _localStore.clear();
+    notifyListeners();
+  }
 }

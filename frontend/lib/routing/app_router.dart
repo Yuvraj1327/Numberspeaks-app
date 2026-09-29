@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../models/bonus_result.dart';
-import '../screens/dashboard_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/report_processing_screen.dart';
 import '../screens/report_upload_screen.dart';
-import '../screens/results_screen.dart';
 import '../screens/user_detail_screen.dart';
+import '../widgets/app_shell.dart';
 import 'app_routes.dart';
 
 /// Central `onGenerateRoute` — every screen is reached only through here, so
@@ -21,7 +20,13 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const LoginScreen(), settings: settings);
 
       case AppRoutes.dashboard:
-        return MaterialPageRoute(builder: (_) => const DashboardScreen(), settings: settings);
+        // Optional int argument selects which bottom-nav tab to land on
+        // (e.g. jumping straight to Results after processing completes).
+        final initialTab = settings.arguments is int ? settings.arguments as int : 0;
+        return MaterialPageRoute(
+          builder: (_) => AppShell(initialTabIndex: initialTab),
+          settings: settings,
+        );
 
       case AppRoutes.upload:
         return MaterialPageRoute(builder: (_) => const ReportUploadScreen(), settings: settings);
@@ -30,13 +35,6 @@ class AppRouter {
         final reportId = settings.arguments as String;
         return MaterialPageRoute(
           builder: (_) => ReportProcessingScreen(reportId: reportId),
-          settings: settings,
-        );
-
-      case AppRoutes.results:
-        final reportId = settings.arguments as String;
-        return MaterialPageRoute(
-          builder: (_) => ResultsScreen(reportId: reportId),
           settings: settings,
         );
 

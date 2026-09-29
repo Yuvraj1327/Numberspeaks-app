@@ -53,3 +53,5 @@ flutter:
     # Bundled at build time so flutter_dotenv can read it at startup. Must
     # exist before `flutter run`/`flutter build` — see .env.example.
     - .env
+    # The Numberspeaks brand mark — see widgets/app_logo.dart.
+    - assets/images/logo.png

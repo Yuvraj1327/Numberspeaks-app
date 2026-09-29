@@ -151,9 +151,10 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
               ),
               const SizedBox(height: AppSpacing.lg),
               ElevatedButton.icon(
-                onPressed: () => Navigator.of(context).pushReplacementNamed(
-                  AppRoutes.results,
-                  arguments: widget.reportId,
+                onPressed: () => Navigator.of(context).pushNamedAndRemoveUntil(
+                  AppRoutes.dashboard,
+                  (route) => false,
+                  arguments: 2, // Results tab.
                 ),
                 icon: const Icon(Icons.list_alt_outlined),
                 label: const Text('View Results'),
