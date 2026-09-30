@@ -33,6 +33,7 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
   late BonusResult _result;
   bool _refreshing = false;
   String? _refreshError;
+  bool _retrying = false;
 
   @override
   void initState() {
@@ -63,15 +64,43 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
     }
   }
 
+  /// Same "no per-user send endpoint" reality as the Results screen's
+  /// Retry action — this calls the report-wide send again, which already
+  /// skips anyone already sent and only (re)attempts pending/failed
+  /// numbers. See README "known gaps".
+  Future<void> _retryWhatsApp() async {
+    setState(() => _retrying = true);
+    final repo = context.read<ReportRepository>();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Retrying WhatsApp for pending/failed users on this report…')),
+    );
+    try {
+      await repo.sendWhatsApp(widget.args.reportId);
+      if (!mounted) return;
+      setState(() => _retrying = false);
+      _refresh();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _retrying = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.userMessage), backgroundColor: AppTheme.danger),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = context.watch<ReportRepository>();
     // The session cache (if a send just happened) can be more specific
     // than the backend's own latest-status field; otherwise fall back to
-    // that durable value from GET /results, which is always present.
-    final whatsAppStatus =
+    // that durable value from GET /results, which is always present. Then
+    // normalized for display so a user with no WhatsApp number on file
+    // always reads "No Number" (see BonusResult.displayWhatsAppStatus).
+    final rawWhatsAppStatus =
         repo.sessionWhatsAppStatusFor(widget.args.reportId, _result.bonusResultId) ??
             _result.whatsappStatus;
+    final whatsAppStatus = _result.displayWhatsAppStatus(rawWhatsAppStatus);
+    final canRetry = whatsAppStatus == 'failed' || whatsAppStatus == 'not_sent';
 
     return Scaffold(
       appBar: AppBar(
@@ -170,10 +199,27 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
                     ),
                     const SizedBox(height: AppSpacing.md),
+                    if (canRetry) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _retrying ? null : _retryWhatsApp,
+                          icon: _retrying
+                              ? const SizedBox(
+                                  height: 16,
+                                  width: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.refresh),
+                          label: Text(_retrying ? 'Retrying…' : 'Retry WhatsApp'),
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                    ],
                     OutlinedButton.icon(
                       onPressed: () => Navigator.of(context).pop(),
                       icon: const Icon(Icons.arrow_back),
-                      label: const Text('Back to Results to Send WhatsApp'),
+                      label: const Text('Back to Results'),
                     ),
                   ],
                 ),
@@ -199,8 +245,8 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
         return 'No bonus is owed for this user, so no message was sent.';
       case 'not_sent':
         return 'No WhatsApp message has been sent to this user yet for this report. '
-            'Use "Send Bonus via WhatsApp" on the Results screen to send to all '
-            'eligible users on this report.';
+            'Use Retry below, or "Send Bonus via WhatsApp" on the Results screen, '
+            'to send to all eligible users on this report.';
       default:
         return 'Status: $status';
     }

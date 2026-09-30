@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../models/bonus_result.dart';
 import '../screens/login_screen.dart';
+import '../screens/main_shell.dart';
 import '../screens/report_processing_screen.dart';
 import '../screens/report_upload_screen.dart';
+import '../screens/results_screen.dart';
+import '../screens/terms_screen.dart';
 import '../screens/user_detail_screen.dart';
-import '../widgets/app_shell.dart';
 import 'app_routes.dart';
 
 /// Central `onGenerateRoute` — every screen is reached only through here, so
@@ -19,14 +21,8 @@ class AppRouter {
       case AppRoutes.login:
         return MaterialPageRoute(builder: (_) => const LoginScreen(), settings: settings);
 
-      case AppRoutes.dashboard:
-        // Optional int argument selects which bottom-nav tab to land on
-        // (e.g. jumping straight to Results after processing completes).
-        final initialTab = settings.arguments is int ? settings.arguments as int : 0;
-        return MaterialPageRoute(
-          builder: (_) => AppShell(initialTabIndex: initialTab),
-          settings: settings,
-        );
+      case AppRoutes.home:
+        return MaterialPageRoute(builder: (_) => const MainShell(), settings: settings);
 
       case AppRoutes.upload:
         return MaterialPageRoute(builder: (_) => const ReportUploadScreen(), settings: settings);
@@ -38,12 +34,22 @@ class AppRouter {
           settings: settings,
         );
 
+      case AppRoutes.results:
+        final reportId = settings.arguments as String;
+        return MaterialPageRoute(
+          builder: (_) => ResultsScreen(reportId: reportId),
+          settings: settings,
+        );
+
       case AppRoutes.userDetail:
         final args = settings.arguments as UserDetailArgs;
         return MaterialPageRoute(
           builder: (_) => UserDetailScreen(args: args),
           settings: settings,
         );
+
+      case AppRoutes.terms:
+        return MaterialPageRoute(builder: (_) => const TermsScreen(), settings: settings);
 
       default:
         return MaterialPageRoute(

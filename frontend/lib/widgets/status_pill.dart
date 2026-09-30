@@ -26,7 +26,7 @@ class StatusPill extends StatelessWidget {
         color = AppTheme.warning;
         break;
       case ReportStatus.unknown:
-        color = Colors.black54;
+        color = AppTheme.textMuted;
         break;
     }
     return StatusPill(label: status.label, color: color);
@@ -39,6 +39,11 @@ class StatusPill extends StatelessWidget {
   /// status (WhatsAppMessageResult, from POST /send-whatsapp) and the
   /// simpler latest-status field on a bonus result (BonusResult.
   /// whatsappStatus, shown on the Results/User Detail screens).
+  ///
+  /// Labels match the four states asked for in the UI brief — Sent /
+  /// Pending / Failed / No Number — "Pending" covers "not_sent" (never
+  /// attempted) and "No Number" covers "skipped_no_number" (no WhatsApp
+  /// number on file, so nothing could be sent).
   factory StatusPill.forWhatsAppStatus(String status) {
     switch (status) {
       case 'sent':
@@ -48,27 +53,27 @@ class StatusPill extends StatelessWidget {
       case 'failed':
         return const StatusPill(label: 'Failed', color: AppTheme.danger);
       case 'skipped_no_number':
-        return const StatusPill(label: 'No WhatsApp number', color: AppTheme.warning);
+        return const StatusPill(label: 'No Number', color: AppTheme.warning);
       case 'skipped_no_bonus':
-        return const StatusPill(label: 'No bonus owed', color: Colors.black54);
+        return const StatusPill(label: 'No bonus owed', color: AppTheme.textMuted);
       case 'not_sent':
-        return const StatusPill(label: 'Not sent', color: Colors.black54);
+        return const StatusPill(label: 'Pending', color: AppTheme.warning);
       default:
-        return StatusPill(label: status, color: Colors.black54);
+        return StatusPill(label: status, color: AppTheme.textMuted);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withOpacity(0.13),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
         label,
-        style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12),
+        style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 12.5),
       ),
     );
   }

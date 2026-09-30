@@ -10,12 +10,13 @@ import 'repositories/auth_repository.dart';
 import 'repositories/report_repository.dart';
 import 'routing/app_router.dart';
 import 'screens/login_screen.dart';
+import 'screens/main_shell.dart';
+import 'services/activity_log_store.dart';
 import 'services/auth_service.dart';
 import 'services/bonus_api_service.dart';
 import 'services/local_report_store.dart';
 import 'services/reports_api_service.dart';
 import 'services/whatsapp_api_service.dart';
-import 'widgets/app_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,6 +64,7 @@ class NumberspeaksApp extends StatelessWidget {
             bonusApi: BonusApiService(apiClient),
             whatsappApi: WhatsAppApiService(apiClient),
             localStore: LocalReportStore(),
+            activityLog: ActivityLogStore(),
           ),
         ),
       ],
@@ -89,7 +91,7 @@ class _AuthGate extends StatelessWidget {
     }
 
     final auth = context.watch<AuthRepository>();
-    return auth.isLoggedIn ? const AppShell() : const LoginScreen();
+    return auth.isLoggedIn ? const MainShell() : const LoginScreen();
   }
 }
 

@@ -39,6 +39,21 @@ class AuthRepository extends ChangeNotifier {
   bool get isLoggedIn => _session != null;
   String? get userEmail => _session?.user.email;
 
+  /// The Supabase Auth user id for the current session — real session
+  /// data, shown on the Account tab alongside the email. Null when logged
+  /// out, same as [userEmail].
+  String? get userId => _session?.user.id;
+
+  /// When the current session's access token expires, if known — shown on
+  /// the Account tab as basic session info. Supabase issues this as a Unix
+  /// timestamp (seconds); null if there is no session or it didn't supply
+  /// an expiry.
+  DateTime? get sessionExpiresAt {
+    final expiresAt = _session?.expiresAt;
+    if (expiresAt == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(expiresAt * 1000);
+  }
+
   Future<bool> login({required String email, required String password}) async {
     isLoading = true;
     lastError = null;

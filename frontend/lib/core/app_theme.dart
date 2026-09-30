@@ -1,150 +1,198 @@
 import 'package:flutter/material.dart';
 
-/// Numberspeaks brand theme — navy/blue/cyan/teal, light fintech look.
-/// One theme, used everywhere, so no screen drifts from it.
+/// Numberspeaks brand theme — a premium fintech/analytics palette taken
+/// from the app logo: deep navy, a royal/bright blue, cyan, and a
+/// teal-green, on white. Token *names* below (`primary`, `success`,
+/// `danger`, `warning`, `surfaceMuted`) are unchanged from the previous
+/// theme on purpose — every existing screen already references them, so
+/// retuning their values here re-skins the whole app without touching
+/// screen code. Light theme only, by design (see README).
 class AppTheme {
   AppTheme._();
 
-  // Brand palette.
-  static const Color navy = Color(0xFF0B2545);
-  static const Color navyDark = Color(0xFF071A33);
-  static const Color primary = Color(0xFF1668C4);
-  static const Color primaryDark = Color(0xFF0F4C8C);
-  static const Color teal = Color(0xFF12B5AA);
-  static const Color cyan = Color(0xFF35D0D0);
+  // --- Brand palette (from the logo) ---------------------------------
+  static const Color navy = Color(0xFF0A1B33); // logo background
+  static const Color navySoft = Color(0xFF14294B); // secondary dark surface
+  static const Color blue = Color(0xFF2F6FEA); // the "N" glyph / primary actions
+  static const Color cyan = Color(0xFF2FC4DE); // chart accent / active states
+  static const Color teal = Color(0xFF14B893); // chart accent / positive values
 
-  static const Color success = Color(0xFF15A36E);
-  static const Color danger = Color(0xFFDC3E3E);
-  static const Color warning = Color(0xFFD98A1F);
+  // --- Semantic tokens used throughout the app ------------------------
+  static const Color primary = blue;
+  static const Color primaryDark = navy;
+  static const Color success = teal;
+  static const Color danger = Color(0xFFD64545);
+  static const Color warning = Color(0xFFC98A1D);
+  static const Color surfaceMuted = Color(0xFFEEF2FA); // faint navy-tinted neutral
+  static const Color background = Color(0xFFF5F7FC); // off-white page background
+  static const Color textMuted = Color(0xFF64708A); // secondary labels
+  static const Color hairline = Color(0xFFE3E8F2); // card borders / dividers
 
-  static const Color background = Color(0xFFF5F8FC);
-  static const Color surfaceMuted = Color(0xFFEEF3F9);
-  static const Color textSecondary = Color(0xFF5B6B82);
-
-  /// Used behind the top nav bar / login header / nav rail.
-  static const LinearGradient brandGradient = LinearGradient(
-    colors: [navy, primary],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
+  // A near-black rather than pure-black text color reads as more "premium
+  // fintech" than default Material black87, and is used as the default
+  // body/heading color everywhere below for stronger contrast/readability.
+  static const Color textStrong = Color(0xFF0F1A30);
 
   static ThemeData get light {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: primary,
-        primary: primary,
+        seedColor: blue,
+        primary: blue,
         secondary: teal,
+        tertiary: cyan,
         error: danger,
         brightness: Brightness.light,
       ),
       scaffoldBackgroundColor: background,
-      fontFamily: 'Roboto',
     );
 
+    // Bolder, higher-contrast type scale — headings and card values read
+    // clearly at a glance, per the "highly readable" brief. Every screen
+    // already pulls its text styles from Theme.of(context).textTheme, so
+    // this alone re-weights the whole app without per-screen edits.
+    final textTheme = base.textTheme
+        .apply(bodyColor: textStrong, displayColor: textStrong)
+        .copyWith(
+          headlineMedium: base.textTheme.headlineMedium?.copyWith(
+              fontSize: 30, fontWeight: FontWeight.w800, color: textStrong, letterSpacing: -0.5),
+          headlineSmall: base.textTheme.headlineSmall?.copyWith(
+              fontSize: 26, fontWeight: FontWeight.w800, color: textStrong, letterSpacing: -0.4),
+          titleLarge: base.textTheme.titleLarge?.copyWith(
+              fontSize: 22, fontWeight: FontWeight.w800, color: textStrong),
+          titleMedium: base.textTheme.titleMedium?.copyWith(
+              fontSize: 17, fontWeight: FontWeight.w700, color: textStrong),
+          titleSmall: base.textTheme.titleSmall?.copyWith(
+              fontSize: 15, fontWeight: FontWeight.w700, color: textStrong),
+          bodyLarge: base.textTheme.bodyLarge?.copyWith(
+              fontSize: 16, fontWeight: FontWeight.w600, color: textStrong),
+          bodyMedium: base.textTheme.bodyMedium?.copyWith(
+              fontSize: 15, fontWeight: FontWeight.w600, color: textStrong),
+          bodySmall: base.textTheme.bodySmall?.copyWith(
+              fontSize: 13, fontWeight: FontWeight.w500, color: textMuted),
+          labelSmall: base.textTheme.labelSmall?.copyWith(
+              fontSize: 12, fontWeight: FontWeight.w600, color: textMuted),
+        );
+
     return base.copyWith(
-      textTheme: base.textTheme.apply(
-        bodyColor: const Color(0xFF15223B),
-        displayColor: const Color(0xFF15223B),
-      ),
+      textTheme: textTheme,
       appBarTheme: const AppBarTheme(
-        backgroundColor: navy,
-        foregroundColor: Colors.white,
+        backgroundColor: background,
+        foregroundColor: navy,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         centerTitle: false,
         titleTextStyle: TextStyle(
-          color: Colors.white,
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
+          color: navy,
+          fontSize: 22,
+          fontWeight: FontWeight.w800,
         ),
+        iconTheme: IconThemeData(color: navy),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 12,
+        shadowColor: navy.withOpacity(0.25),
+        indicatorColor: blue.withOpacity(0.12),
+        indicatorShape: const StadiumBorder(),
+        height: 72,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        // Bold labels at both states so every tab stays clearly legible;
+        // the selected one is heavier and picks up the brand blue.
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 12.5,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+            color: selected ? navy : textMuted,
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(color: selected ? navy : textMuted, size: 26);
+        }),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: primary,
+          backgroundColor: blue,
           foregroundColor: Colors.white,
-          minimumSize: const Size.fromHeight(48),
+          minimumSize: const Size.fromHeight(54),
           elevation: 0,
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(16),
           ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size.fromHeight(48),
-          side: const BorderSide(color: primary),
-          foregroundColor: primary,
+          minimumSize: const Size.fromHeight(52),
+          side: const BorderSide(color: hairline, width: 1.4),
+          foregroundColor: blue,
+          backgroundColor: Colors.white,
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(16),
           ),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(foregroundColor: primary),
+        style: TextButton.styleFrom(
+          foregroundColor: blue,
+          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+        ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: surfaceMuted,
+        fillColor: Colors.white,
+        hintStyle: const TextStyle(color: textMuted, fontWeight: FontWeight.w600),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: hairline),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: hairline),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: primary, width: 1.5),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: blue, width: 1.6),
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
       cardTheme: CardThemeData(
-        elevation: 0,
+        // Soft, wide, low-opacity shadow + hairline border: reads as a
+        // clean floating card on the off-white page.
+        elevation: 3,
+        shadowColor: navy.withOpacity(0.10),
         color: Colors.white,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Color(0xFFE4EAF2)),
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: hairline),
         ),
         margin: EdgeInsets.zero,
       ),
-      snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
-      dividerTheme: const DividerThemeData(space: 1, thickness: 1, color: Color(0xFFE4EAF2)),
-      navigationBarTheme: NavigationBarThemeData(
+      chipTheme: base.chipTheme.copyWith(
         backgroundColor: Colors.white,
-        elevation: 0,
-        height: 64,
-        indicatorColor: teal.withOpacity(0.15),
-        labelTextStyle: WidgetStateProperty.resolveWith((states) {
-          final selected = states.contains(WidgetState.selected);
-          return TextStyle(
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-            color: selected ? navy : textSecondary,
-          );
-        }),
-        iconTheme: WidgetStateProperty.resolveWith((states) {
-          final selected = states.contains(WidgetState.selected);
-          return IconThemeData(color: selected ? teal : textSecondary);
-        }),
+        side: const BorderSide(color: hairline),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
-      navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: navy,
-        indicatorColor: teal.withOpacity(0.25),
-        selectedIconTheme: const IconThemeData(color: cyan),
-        unselectedIconTheme: const IconThemeData(color: Colors.white70),
-        selectedLabelTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-        unselectedLabelTextStyle: const TextStyle(color: Colors.white70),
+      snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
+      dialogTheme: DialogThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        titleTextStyle: const TextStyle(
+            color: textStrong, fontSize: 20, fontWeight: FontWeight.w800),
       ),
-      listTileTheme: const ListTileThemeData(
-        iconColor: primary,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
-      ),
-      switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected) ? teal : null,
-        ),
-        trackColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected) ? teal.withOpacity(0.4) : null,
-        ),
+      dividerTheme: const DividerThemeData(space: 1, thickness: 1, color: hairline),
+      listTileTheme: ListTileThemeData(
+        iconColor: navy,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -158,4 +206,18 @@ class AppSpacing {
   static const double md = 16;
   static const double lg = 24;
   static const double xl = 32;
+}
+
+/// A softer, larger drop shadow than the default CardTheme elevation, for
+/// the rare surface that wants to lift further off the page than an
+/// ordinary card (e.g. a modal-like emphasized container).
+class AppShadows {
+  AppShadows._();
+  static List<BoxShadow> soft = [
+    BoxShadow(
+      color: AppTheme.navy.withOpacity(0.08),
+      blurRadius: 20,
+      offset: const Offset(0, 8),
+    ),
+  ];
 }

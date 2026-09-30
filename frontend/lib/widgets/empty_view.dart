@@ -18,12 +18,23 @@ class EmptyView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 40, color: Colors.black38),
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppTheme.blue.withOpacity(0.10),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 34, color: AppTheme.blue),
+            ),
             const SizedBox(height: AppSpacing.md),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: AppTheme.textMuted, fontWeight: FontWeight.w600, height: 1.4),
             ),
           ],
         ),

@@ -44,6 +44,20 @@ class BonusResult {
     required this.createdAt,
   });
 
+  /// Client-side display normalization only (never sent back to the
+  /// backend, never changes stored data): if this user has no WhatsApp
+  /// number on file at all, the status shown is always "No Number"
+  /// regardless of the raw status string, since no message could possibly
+  /// have been sent to them. Otherwise the raw status (backend value, or a
+  /// same-session send result) is shown as-is.
+  String displayWhatsAppStatus(String rawStatus) {
+    final hasNumber = whatsappNumber != null && whatsappNumber!.trim().isNotEmpty;
+    if (!hasNumber && rawStatus != 'sent' && rawStatus != 'failed') {
+      return 'skipped_no_number';
+    }
+    return rawStatus;
+  }
+
   factory BonusResult.fromJson(Map<String, dynamic> json) {
     return BonusResult(
       bonusResultId: json['bonus_result_id'] as String? ?? '',

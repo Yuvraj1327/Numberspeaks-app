@@ -53,5 +53,7 @@ flutter:
     # Bundled at build time so flutter_dotenv can read it at startup. Must
     # exist before `flutter run`/`flutter build` — see .env.example.
     - .env
-    # The Numberspeaks brand mark — see widgets/app_logo.dart.
-    - assets/images/logo.png
+    # App logo — used in the top navbar and the login screen (see
+    # widgets/app_logo.dart). Falls back to a drawn icon if this file is
+    # ever missing, so a bad build never crashes on a missing asset.
+    - assets/images/numberspeaks_logo.png

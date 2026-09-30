@@ -2,101 +2,180 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_theme.dart';
-import '../repositories/report_repository.dart';
+import '../core/logout_helper.dart';
+import '../repositories/auth_repository.dart';
+import '../routing/app_routes.dart';
+import '../widgets/screen_header.dart';
 
-/// Settings tab — local app preferences only. No backend/API behavior
-/// lives here.
-class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
+/// Kept in sync with `pubspec.yaml`'s `version:` field by hand — adding a
+/// package just to read it back at runtime (`package_info_plus`) would be
+/// a new dependency for one static string this project already declares.
+const String _appVersion = '1.0.0+1';
 
-  Future<void> _confirmClearLocalData(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear local data?'),
-        content: const Text(
-          "This removes this device's remembered \"last report\" only. "
-          'Nothing is deleted on the server.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Clear', style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
-    );
+/// Settings tab (embedded inside [MainShell]).
+///
+/// A plain grouped list — Account, Theme, App information, Terms &
+/// Conditions, Logout — per the spec. Theme and App information are
+/// informational only (this app ships light-theme-only, and there is no
+/// backend "about" content to show), never a toggle or content that isn't
+/// real.
+class SettingsTab extends StatelessWidget {
+  final VoidCallback onOpenAccount;
 
-    if (confirmed != true || !context.mounted) return;
-    await context.read<ReportRepository>().clearLocalData();
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Local data cleared.')),
-    );
-  }
+  const SettingsTab({super.key, required this.onOpenAccount});
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthRepository>();
+
     return ListView(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       children: [
-        Text(
-          'Settings',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+        const ScreenHeader(eyebrow: 'Preferences', title: 'Settings'),
+        const SizedBox(height: AppSpacing.lg),
+        _SettingsGroup(
+          children: [
+            _SettingsTile(
+              icon: Icons.person_outline,
+              title: 'Account',
+              subtitle: auth.userEmail,
+              onTap: onOpenAccount,
+            ),
+            _SettingsTile(
+              icon: Icons.palette_outlined,
+              title: 'Theme',
+              subtitle: 'Light (default)',
+              onTap: () => _showThemeInfo(context),
+            ),
+            _SettingsTile(
+              icon: Icons.info_outline,
+              title: 'App Information',
+              subtitle: 'Version, about Numberspeaks',
+              onTap: () => _showAppInfo(context),
+            ),
+            _SettingsTile(
+              icon: Icons.description_outlined,
+              title: 'Terms & Conditions',
+              onTap: () => Navigator.of(context).pushNamed(AppRoutes.terms),
+              showDivider: false,
+            ),
+          ],
         ),
         const SizedBox(height: AppSpacing.lg),
-        const _SectionLabel('Data'),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.delete_outline, color: AppTheme.primary),
-            title: const Text('Clear local data'),
-            subtitle: const Text('Forgets this device\'s last uploaded report'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _confirmClearLocalData(context),
-          ),
+        _SettingsGroup(
+          children: [
+            _SettingsTile(
+              icon: Icons.logout,
+              title: 'Logout',
+              iconColor: AppTheme.danger,
+              titleColor: AppTheme.danger,
+              onTap: () => confirmAndLogout(context, auth),
+              showDivider: false,
+            ),
+          ],
         ),
-        const SizedBox(height: AppSpacing.lg),
-        const _SectionLabel('About'),
-        const Card(
-          child: Column(
-            children: [
-              ListTile(
-                leading: Icon(Icons.info_outline, color: AppTheme.primary),
-                title: Text('Numberspeaks'),
-                subtitle: Text('Version 1.0.0'),
-              ),
-              Divider(height: 1),
-              ListTile(
-                leading: Icon(Icons.description_outlined, color: AppTheme.primary),
-                title: Text('Bonus Calculation App'),
-                subtitle: Text('Frontend for the Numberspeaks backend'),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: AppSpacing.xl),
       ],
+    );
+  }
+
+  void _showThemeInfo(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Theme'),
+        content: const Text(
+          'Numberspeaks currently uses a light theme only. Dark theme '
+          'support may be added in a future update.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+
+  void _showAppInfo(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('About Numberspeaks'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Numberspeaks — Bonus Calculation App'),
+            SizedBox(height: AppSpacing.sm),
+            Text('Version $_appVersion'),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
+        ],
+      ),
     );
   }
 }
 
-class _SectionLabel extends StatelessWidget {
-  final String label;
+class _SettingsGroup extends StatelessWidget {
+  final List<Widget> children;
 
-  const _SectionLabel(this.label);
+  const _SettingsGroup({required this.children});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm, left: AppSpacing.xs),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: AppTheme.textSecondary,
-              fontWeight: FontWeight.w600,
-            ),
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        child: Column(children: children),
       ),
+    );
+  }
+}
+
+class _SettingsTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final VoidCallback onTap;
+  final Color? iconColor;
+  final Color? titleColor;
+  final bool showDivider;
+
+  const _SettingsTile({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    required this.onTap,
+    this.iconColor,
+    this.titleColor,
+    this.showDivider = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 4),
+          leading: IconBadge(icon: icon, color: iconColor ?? AppTheme.primary, size: 44),
+          title: Text(
+            title,
+            style: TextStyle(
+              color: titleColor ?? AppTheme.navy,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          subtitle: subtitle != null
+              ? Text(subtitle!,
+                  style: const TextStyle(
+                      color: AppTheme.textMuted, fontSize: 13.5, fontWeight: FontWeight.w600))
+              : null,
+          trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted, size: 26),
+          onTap: onTap,
+        ),
+        if (showDivider) const Divider(height: 1, indent: 76, endIndent: AppSpacing.md),
+      ],
     );
   }
 }

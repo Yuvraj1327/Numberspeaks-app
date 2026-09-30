@@ -42,7 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
     if (success) {
-      Navigator.of(context).pushReplacementNamed(AppRoutes.dashboard);
+      Navigator.of(context).pushReplacementNamed(AppRoutes.home);
     }
   }
 
@@ -62,24 +62,25 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Center(child: AppLogo(size: 64)),
-                    const SizedBox(height: AppSpacing.md),
+                    const Center(child: AppLogo(size: 104, elevated: true)),
+                    const SizedBox(height: AppSpacing.lg),
                     Text(
                       'Numberspeaks',
                       textAlign: TextAlign.center,
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w900,
+                            color: AppTheme.navy,
+                          ),
                     ),
-                    const SizedBox(height: AppSpacing.xs),
+                    const SizedBox(height: AppSpacing.sm),
                     Text(
                       'Sign in to manage bonus reports',
                       textAlign: TextAlign.center,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(color: Colors.black54),
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: AppTheme.textMuted,
+                            fontWeight: FontWeight.w600,
+                          ),
                     ),
                     const SizedBox(height: AppSpacing.xl),
                     TextFormField(
@@ -88,7 +89,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       autofillHints: const [AutofillHints.email],
                       decoration: const InputDecoration(
                         labelText: 'Email',
-                        prefixIcon: Icon(Icons.email_outlined),
+                        prefixIcon: Icon(Icons.email_outlined, color: AppTheme.navy),
                       ),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
@@ -105,7 +106,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       autofillHints: const [AutofillHints.password],
                       decoration: InputDecoration(
                         labelText: 'Password',
-                        prefixIcon: const Icon(Icons.lock_outline),
+                        prefixIcon: const Icon(Icons.lock_outline, color: AppTheme.navy),
                         suffixIcon: IconButton(
                           icon: Icon(_obscurePassword
                               ? Icons.visibility_outlined
@@ -121,9 +122,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     if (auth.lastError != null) ...[
                       const SizedBox(height: AppSpacing.md),
-                      const Text(
+                      Text(
                         'Invalid email or password. Please try again.',
-                        style: TextStyle(color: AppTheme.danger),
+                        style: const TextStyle(color: AppTheme.danger),
                         textAlign: TextAlign.center,
                       ),
                     ],
