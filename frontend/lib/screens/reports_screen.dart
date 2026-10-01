@@ -30,10 +30,24 @@ class _ReportsTabState extends State<ReportsTab> {
   bool _loading = true;
   List<LocalReportEntry> _reports = [];
 
+  late final ReportRepository _repo;
+
   @override
   void initState() {
     super.initState();
+    _repo = context.read<ReportRepository>()..addListener(_onRepoChanged);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _repo.removeListener(_onRepoChanged);
+    super.dispose();
+  }
+
+  /// An upload / status change elsewhere in the app: re-read the list.
+  void _onRepoChanged() {
+    if (mounted) _load();
   }
 
   Future<void> _load() async {

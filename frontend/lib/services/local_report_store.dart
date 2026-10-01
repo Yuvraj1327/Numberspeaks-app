@@ -135,6 +135,39 @@ class LocalReportStore {
     await _writeList(prefs, key, list);
   }
 
+  /// Makes the on-device list match the account's reports as the backend
+  /// lists them (newest first): reports it no longer lists are dropped, new
+  /// ones added. Figures this device already knew for a report (bonus
+  /// totals, which the list doesn't carry) are kept.
+  Future<void> syncWithServer(List<Map<String, dynamic>> serverReports) async {
+    final key = _key;
+    if (key == null) return;
+    final prefs = await _prefs();
+    final known = {for (final e in await _readList(prefs, key)) e.reportId: e};
+
+    final synced = <LocalReportEntry>[];
+    for (final json in serverReports) {
+      final id = json['report_id'] as String? ?? '';
+      if (id.isEmpty) continue;
+      final old = known[id];
+      final total = (json['total_records'] as num?)?.toInt() ?? 0;
+      synced.add(LocalReportEntry(
+        reportId: id,
+        fileName: json['file_name'] as String? ?? old?.fileName ?? '',
+        status: json['status'] as String? ?? old?.status ?? '',
+        updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '')?.toLocal() ??
+            DateTime.tryParse(json['uploaded_at'] as String? ?? '')?.toLocal() ??
+            old?.updatedAt ??
+            DateTime.now(),
+        userCount: total > 0 ? total : old?.userCount,
+        bonusEligibleCount: old?.bonusEligibleCount,
+        totalBonus: old?.totalBonus,
+      ));
+    }
+    if (synced.length > _maxHistory) synced.removeRange(_maxHistory, synced.length);
+    await _writeList(prefs, key, synced);
+  }
+
   /// Forgets a report the backend says no longer exists (or is not this
   /// account's), so the app stops offering to open it.
   Future<void> removeReport(String reportId) async {

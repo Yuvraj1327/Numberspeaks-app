@@ -118,6 +118,23 @@ class IsolationTests(PipelineTestCase):
         self.user = ADMIN
         self.assertEqual(self.api("get", f"/reports/{report_id}/results").status_code, 200)
 
+    def test_report_list_is_the_accounts_own_and_survives_logout_login(self):
+        a = self.upload_as(USER_A)
+        b = self.upload_as(USER_B)
+
+        self.user = USER_A
+        listed = self.api("get", "/reports").json()
+        self.assertEqual([r["report_id"] for r in listed], [a])
+        self.assertEqual((listed[0]["status"], listed[0]["total_records"]), ("completed", 2))
+        self.user = USER_B
+        self.assertEqual([r["report_id"] for r in self.api("get", "/reports").json()], [b])
+
+        # Only admins may ask for everyone's; an admin's default is their own.
+        self.assertEqual(self.api("get", "/reports?all=true").status_code, 403)
+        self.user = ADMIN
+        self.assertEqual(self.api("get", "/reports").json(), [])
+        self.assertEqual({r["report_id"] for r in self.api("get", "/reports?all=true").json()}, {a, b})
+
     def test_results_of_a_report_that_does_not_exist_is_404(self):
         self.user = USER_A
         r = self.api("get", f"/reports/{uuid.uuid4()}/results")
@@ -158,7 +175,7 @@ class TokenVerificationTests(unittest.TestCase):
     def test_missing_token_is_401_on_every_report_endpoint(self):
         rid = uuid.uuid4()
         for method, path in [
-            ("post", "/reports/upload"), ("get", f"/reports/{rid}/status"),
+            ("post", "/reports/upload"), ("get", "/reports"), ("get", f"/reports/{rid}/status"),
             ("post", f"/reports/{rid}/validate"), ("post", f"/reports/{rid}/calculate-bonus"),
             ("get", f"/reports/{rid}/results"), ("get", f"/reports/{rid}/results/{rid}"),
             ("post", f"/reports/{rid}/send-whatsapp"),

@@ -60,6 +60,18 @@ def get_report(db: Client, report_id: str) -> Optional[dict]:
     return res.data[0] if res.data else None
 
 
+def list_reports(db: Client, owner_id: Optional[str], limit: int) -> List[dict]:
+    """Newest-first reports uploaded by `owner_id`; every account's when
+    `owner_id` is None (admin view)."""
+    query = db.table("reports").select(
+        "id, owner_id, file_name, status, total_records, calculated_count, failed_count, "
+        "uploaded_at, updated_at"
+    )
+    if owner_id is not None:
+        query = query.eq("owner_id", owner_id)
+    return query.order("uploaded_at", desc=True).limit(limit).execute().data
+
+
 BONUS_RESULT_SELECT = (
     "id, report_id, user_id, casino_pts, sport_pts, third_party_pts, "
     "profit_loss, ptype, bonus_amount, calculation_status, created_at, "

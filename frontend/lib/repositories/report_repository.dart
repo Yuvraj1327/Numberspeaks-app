@@ -117,6 +117,9 @@ class ReportRepository extends ChangeNotifier {
       status: progress.status,
       userCount: progress.totalRecords > 0 ? progress.totalRecords : null,
     );
+    // The Dashboard / Reports / Results tabs reload when told a report has
+    // finished, so its results show up without a manual refresh.
+    if (progress.isFinal) notifyListeners();
     return progress;
   }
 
@@ -230,16 +233,35 @@ class ReportRepository extends ChangeNotifier {
 
   WhatsAppSendSummary? sessionWhatsAppSummaryFor(String reportId) => _sessionSummaries[reportId];
 
-  Future<String?> getLastReportId() => _localStore.getLastReportId();
+  Future<String?> getLastReportId() async {
+    final reports = await getRecentReports();
+    return reports.isEmpty ? null : reports.first.reportId;
+  }
 
-  Future<String?> getLastReportFileName() => _localStore.getLastReportFileName();
+  Future<String?> getLastReportFileName() async {
+    final reports = await getRecentReports();
+    return reports.isEmpty ? null : reports.first.fileName;
+  }
 
-  Future<String?> getLastReportStatus() => _localStore.getLastReportStatus();
+  Future<String?> getLastReportStatus() async {
+    final reports = await getRecentReports();
+    return reports.isEmpty ? null : reports.first.status;
+  }
 
-  /// Every report this device has uploaded, most-recently-touched first —
-  /// powers the Reports tab. See [LocalReportStore] for exactly what this
-  /// does and doesn't store.
-  Future<List<LocalReportEntry>> getRecentReports() => _localStore.getRecentReports();
+  /// The signed-in account's reports, newest first — powers the Reports
+  /// tab. The backend's list for the account is the source of truth, so
+  /// they are all there again after logging out and back in (or on a new
+  /// device). The on-device copy ([LocalReportStore]) is refreshed from it
+  /// and only used as-is when the list can't be fetched (offline, or an
+  /// older server without the endpoint).
+  Future<List<LocalReportEntry>> getRecentReports() async {
+    try {
+      await _localStore.syncWithServer(await _reportsApi.listReports());
+    } on ApiException {
+      // Fall through to the last known list.
+    }
+    return _localStore.getRecentReports();
+  }
 
   /// Recent real actions this device has taken (upload/validate/calculate/
   /// send), most recent first — powers the Dashboard's activity feed. See

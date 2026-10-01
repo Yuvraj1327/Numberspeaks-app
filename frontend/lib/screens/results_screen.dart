@@ -86,10 +86,30 @@ class ResultsTab extends StatefulWidget {
 class _ResultsTabState extends State<ResultsTab> {
   bool _loading = true;
   String? _reportId;
+  // Bumped on every repository change so the results list is fetched again
+  // (a report that was still processing when this tab first loaded now has
+  // its results).
+  int _version = 0;
+  late final ReportRepository _repo;
 
   @override
   void initState() {
     super.initState();
+    _repo = context.read<ReportRepository>()..addListener(_onRepoChanged);
+    _resolveReport();
+  }
+
+  @override
+  void dispose() {
+    _repo.removeListener(_onRepoChanged);
+    super.dispose();
+  }
+
+  /// A report was uploaded, finished or had WhatsApp sent elsewhere in the
+  /// app: show the newest report's current results.
+  void _onRepoChanged() {
+    if (!mounted) return;
+    _version++;
     _resolveReport();
   }
 
@@ -135,7 +155,7 @@ class _ResultsTabState extends State<ResultsTab> {
     }
     return _ResultsBody(
       // Keyed by report so a different report always gets a fresh load.
-      key: ValueKey(_reportId),
+      key: ValueKey('$_reportId#$_version'),
       reportId: _reportId!,
       showHeader: true,
       // The report is gone (the repository has already dropped it from the

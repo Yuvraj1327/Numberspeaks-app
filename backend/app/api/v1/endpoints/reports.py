@@ -14,12 +14,12 @@ compatibility; it refuses to run while the background job owns the report.
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.core.auth import AuthUser, can_access_report, get_current_user
 from app.core.config import get_settings
 from app.db.supabase_client import SupabaseNotConfiguredError, get_supabase
-from app.schemas.report import ReportStatusResponse, UploadReportResponse
+from app.schemas.report import ReportListItem, ReportStatusResponse, UploadReportResponse
 from app.schemas.validation import ValidationSummary
 from app.services.report_processor import resume_if_abandoned, submit_report
 from app.services.reports_service import (
@@ -30,6 +30,7 @@ from app.services.reports_service import (
     default_row_reference,
     get_bonus_results_for_report,
     get_report,
+    list_reports,
     safe_error,
     storage_path_for,
     update_report_status,
@@ -128,6 +129,48 @@ def upload_report(
         records=[],
         warnings=[],
     )
+
+
+@router.get(
+    "",
+    response_model=list[ReportListItem],
+    summary="List the signed-in account's reports, newest first",
+)
+def list_my_reports(
+    limit: int = Query(20, ge=1, le=100),
+    all_accounts: bool = Query(False, alias="all", description="Admins only: include every account's reports."),
+    user: AuthUser = Depends(get_current_user),
+) -> list[ReportListItem]:
+    if all_accounts and not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can list every account's reports.")
+
+    try:
+        db = get_supabase()
+    except SupabaseNotConfiguredError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    try:
+        rows = list_reports(db, None if all_accounts else user.id, limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to list reports: %s", safe_error(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not read reports from the database.",
+        ) from exc
+
+    return [
+        ReportListItem(
+            report_id=row["id"],
+            file_name=row.get("file_name") or "",
+            status=row["status"],
+            total_records=row.get("total_records") or 0,
+            calculated_count=row.get("calculated_count") or 0,
+            failed_count=row.get("failed_count") or 0,
+            uploaded_at=row.get("uploaded_at"),
+            updated_at=row.get("updated_at"),
+        )
+        for row in rows
+    ]
 
 
 @router.get(

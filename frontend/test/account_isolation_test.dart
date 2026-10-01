@@ -68,4 +68,29 @@ void main() {
     expect(await log.getRecent(), isEmpty);
     expect((await SharedPreferences.getInstance()).containsKey('activity_log_v1'), isFalse);
   });
+
+  test('the account\'s list from the backend replaces the on-device one', () async {
+    final store = LocalReportStore(userId: () => 'user-a');
+    await store.upsertReport(
+        reportId: 'kept', fileName: 'k.pdf', status: 'completed', bonusEligibleCount: 3, totalBonus: 90);
+    await store.upsertReport(reportId: 'gone', fileName: 'g.pdf', status: 'completed');
+
+    await store.syncWithServer([
+      {'report_id': 'new', 'file_name': 'n.pdf', 'status': 'completed', 'total_records': 5},
+      {'report_id': 'kept', 'file_name': 'k.pdf', 'status': 'completed', 'total_records': 4},
+    ]);
+
+    final list = await store.getRecentReports();
+    expect(list.map((e) => e.reportId), ['new', 'kept']);
+    expect(list[0].userCount, 5);
+    expect(list[1].totalBonus, 90); // figure only this device knew is kept
+
+    // A fresh device / after reinstall: nothing local, the account's list fills it.
+    SharedPreferences.setMockInitialValues({});
+    final fresh = LocalReportStore(userId: () => 'user-a');
+    await fresh.syncWithServer([
+      {'report_id': 'new', 'file_name': 'n.pdf', 'status': 'completed', 'total_records': 5},
+    ]);
+    expect(await fresh.getLastReportId(), 'new');
+  });
 }

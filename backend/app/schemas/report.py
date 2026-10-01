@@ -74,3 +74,16 @@ class ReportStatusResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list)
     uploaded_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+class ReportListItem(BaseModel):
+    """One report in GET /reports — the signed-in account's own uploads."""
+
+    report_id: str
+    file_name: str
+    status: str
+    total_records: int = 0
+    calculated_count: int = 0
+    failed_count: int = 0
+    uploaded_at: Optional[str] = None
+    updated_at: Optional[str] = None

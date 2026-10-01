@@ -26,6 +26,12 @@ class ReportsApiService {
     return UploadReportResponse.fromJson(json);
   }
 
+  /// GET /api/v1/reports — the signed-in account's own reports, newest first.
+  Future<List<Map<String, dynamic>>> listReports({int limit = 10}) async {
+    final list = await _client.getList('/reports?limit=$limit');
+    return list.whereType<Map<String, dynamic>>().toList();
+  }
+
   /// GET /api/v1/reports/{report_id}/status — the background-processing
   /// progress of an uploaded report.
   Future<ReportProgress> getReportStatus(String reportId) async {

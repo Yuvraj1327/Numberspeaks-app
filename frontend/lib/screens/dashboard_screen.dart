@@ -48,10 +48,24 @@ class _DashboardTabState extends State<DashboardTab> {
   int _totalReports = 0;
   List<ActivityEntry> _activity = [];
 
+  late final ReportRepository _repo;
+
   @override
   void initState() {
     super.initState();
+    _repo = context.read<ReportRepository>()..addListener(_onRepoChanged);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _repo.removeListener(_onRepoChanged);
+    super.dispose();
+  }
+
+  /// A report finished or was uploaded elsewhere in the app: reload.
+  void _onRepoChanged() {
+    if (mounted) _load();
   }
 
   Future<void> _load() async {
