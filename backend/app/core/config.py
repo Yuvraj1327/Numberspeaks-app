@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
 
+    # --- Access control ---
+    # Comma-separated Supabase user ids that may see and manage every
+    # report (in addition to users whose Supabase app_metadata.role is
+    # "admin"). Everyone else only has access to the reports they uploaded.
+    ADMIN_USER_IDS: str = ""
+
     # --- Report processing ---
     # Largest PDF accepted by POST /reports/upload.
     MAX_UPLOAD_MB: int = 50
@@ -79,6 +85,10 @@ class Settings(BaseSettings):
         if self.CORS_ORIGINS.strip() == "*":
             return ["*"]
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def admin_user_ids(self) -> List[str]:
+        return [uid.strip() for uid in self.ADMIN_USER_IDS.split(",") if uid.strip()]
 
     @property
     def has_supabase_config(self) -> bool:

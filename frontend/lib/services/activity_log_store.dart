@@ -66,9 +66,23 @@ class ActivityEntry {
 /// On-device only log of real actions taken in this app (see [ActivityEntry]
 /// doc comment). Bounded so it never grows unbounded on a device that's
 /// been used for a long time.
+///
+/// Like [LocalReportStore], the log is kept per signed-in account, so one
+/// account's activity never shows up for the next one on the same device.
+/// The old un-scoped log is deleted the first time the store is used.
 class ActivityLogStore {
-  static const _key = 'activity_log_v1';
+  ActivityLogStore({required String? Function() userId}) : _userId = userId;
+
+  final String? Function() _userId;
+
+  static const _legacyKey = 'activity_log_v1';
+  static const _baseKey = 'activity_log_v2';
   static const _maxEntries = 30;
+
+  String? get _key {
+    final id = _userId();
+    return id == null || id.isEmpty ? null : '$_baseKey:$id';
+  }
 
   Future<void> log({
     required ActivityType type,
@@ -76,8 +90,10 @@ class ActivityLogStore {
     String? fileName,
     String? detail,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = await _readList(prefs);
+    final key = _key;
+    if (key == null) return;
+    final prefs = await _prefs();
+    final list = await _readList(prefs, key);
     list.insert(
       0,
       ActivityEntry(
@@ -89,23 +105,33 @@ class ActivityLogStore {
       ),
     );
     if (list.length > _maxEntries) list.removeRange(_maxEntries, list.length);
-    await _writeList(prefs, list);
+    await _writeList(prefs, key, list);
   }
 
   /// Most recent entries first, capped at [limit].
   Future<List<ActivityEntry>> getRecent({int limit = 5}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = await _readList(prefs);
+    final key = _key;
+    if (key == null) return [];
+    final prefs = await _prefs();
+    final list = await _readList(prefs, key);
     return list.take(limit).toList();
   }
 
   Future<void> clear() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_key);
+    final key = _key;
+    if (key == null) return;
+    final prefs = await _prefs();
+    await prefs.remove(key);
   }
 
-  Future<List<ActivityEntry>> _readList(SharedPreferences prefs) async {
-    final raw = prefs.getString(_key);
+  Future<SharedPreferences> _prefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.containsKey(_legacyKey)) await prefs.remove(_legacyKey);
+    return prefs;
+  }
+
+  Future<List<ActivityEntry>> _readList(SharedPreferences prefs, String key) async {
+    final raw = prefs.getString(key);
     if (raw == null || raw.isEmpty) return [];
     try {
       final decoded = jsonDecode(raw) as List<dynamic>;
@@ -117,8 +143,8 @@ class ActivityLogStore {
     }
   }
 
-  Future<void> _writeList(SharedPreferences prefs, List<ActivityEntry> list) async {
+  Future<void> _writeList(SharedPreferences prefs, String key, List<ActivityEntry> list) async {
     final raw = jsonEncode(list.map((e) => e.toJson()).toList());
-    await prefs.setString(_key, raw);
+    await prefs.setString(key, raw);
   }
 }

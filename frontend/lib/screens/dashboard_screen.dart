@@ -62,23 +62,32 @@ class _DashboardTabState extends State<DashboardTab> {
 
     final repo = context.read<ReportRepository>();
     try {
-      final reports = await repo.getRecentReports();
-      final activity = await repo.getRecentActivity(limit: 5);
-      final reportId = reports.isEmpty ? null : reports.first.reportId;
-      final fileName = reports.isEmpty ? null : reports.first.fileName;
-      final status = reports.isEmpty ? null : reports.first.status;
-
+      // The newest report that the backend still has for this account. A
+      // report it says doesn't exist is dropped from the list by the
+      // repository, so the next pass moves on to the following one.
+      var reports = await repo.getRecentReports();
       List<BonusResult> results = [];
-      if (reportId != null) {
+      while (reports.isNotEmpty) {
         try {
-          results = await repo.getResults(reportId);
-        } on ApiException {
+          results = await repo.getResults(reports.first.reportId);
+          break;
+        } on ApiException catch (e) {
+          if (e.kind == ApiErrorKind.notFound) {
+            final before = reports.length;
+            reports = await repo.getRecentReports();
+            if (reports.length < before) continue; // the missing one was dropped
+          }
           // The report may not have any results yet (e.g. upload
           // succeeded but validation hasn't run) — that's not a
           // dashboard-level error, just an empty summary.
           results = [];
+          break;
         }
       }
+      final activity = await repo.getRecentActivity(limit: 5);
+      final reportId = reports.isEmpty ? null : reports.first.reportId;
+      final fileName = reports.isEmpty ? null : reports.first.fileName;
+      final status = reports.isEmpty ? null : reports.first.status;
 
       if (!mounted) return;
       setState(() {

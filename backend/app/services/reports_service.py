@@ -255,12 +255,19 @@ def to_bonus_result(row: dict, whatsapp_status: Optional[str] = None) -> BonusRe
     )
 
 
-def create_report(db: Client, report_id: str, file_name: str, file_path: str) -> dict:
+def create_report(db: Client, report_id: str, file_name: str, file_path: str, owner_id: str) -> dict:
     """Inserts the reports row (status 'uploaded') for a file that has
-    already been given its storage path."""
+    already been given its storage path. `owner_id` is the authenticated
+    account that uploaded it; every later access is checked against it."""
     res = (
         db.table("reports")
-        .insert({"id": report_id, "file_name": file_name, "file_path": file_path, "status": "uploaded"})
+        .insert({
+            "id": report_id,
+            "owner_id": owner_id,
+            "file_name": file_name,
+            "file_path": file_path,
+            "status": "uploaded",
+        })
         .execute()
     )
     return res.data[0]
@@ -370,14 +377,17 @@ def _in_filter_value(values: List[str]) -> str:
 def ensure_users(
     db: Client,
     first_record_by_name: Dict[str, ExtractedRecord],
+    owner_id: Optional[str] = None,
     heartbeat: Optional[Callable[[], None]] = None,
 ) -> Tuple[Dict[str, str], List[str]]:
     """
     Bulk equivalent of "find the user by exact name, or create them".
 
     Matching by name (rather than generating a new user per report) keeps
-    the same person's bonus history linked across report uploads. When a
-    match is found and the report shows a different level or WhatsApp
+    the same person's bonus history linked across report uploads. Matching
+    is limited to users created by the same account (`owner_id`), so one
+    account's upload can never reuse, read or overwrite another account's
+    recipients (their level / WhatsApp number). When a match is found and the report shows a different level or WhatsApp
     number, that field is updated to the report's latest value.
 
     Costs one lookup per USER_LOOKUP_CHUNK names, one upsert per batch of
@@ -388,13 +398,15 @@ def ensure_users(
     names = list(first_record_by_name)
     existing: Dict[str, dict] = {}
     for chunk in _chunks(names, USER_LOOKUP_CHUNK):
-        res = (
+        query = (
             db.table("users")
             .select("id, name, level, whatsapp_number")
             .filter("name", "in", _in_filter_value(chunk))
-            .order("created_at")
-            .execute()
         )
+        # Reports without an owner (uploaded before ownership existed) keep
+        # using the users that likewise have no owner.
+        query = query.eq("owner_id", owner_id) if owner_id else query.filter("owner_id", "is", "null")
+        res = query.order("created_at").execute()
         for user in res.data:
             existing.setdefault(user["name"], user)  # oldest wins if names repeat
         if heartbeat:
@@ -424,7 +436,7 @@ def ensure_users(
 
     # New users.
     to_create = [
-        {"name": name, "level": rec.level, "whatsapp_number": rec.whatsapp_number}
+        {"name": name, "level": rec.level, "whatsapp_number": rec.whatsapp_number, "owner_id": owner_id}
         for name, rec in first_record_by_name.items()
         if name not in existing
     ]
@@ -443,6 +455,7 @@ def save_extracted_records(
     db: Client,
     report_id: str,
     records: List[ExtractedRecord],
+    owner_id: Optional[str] = None,
     heartbeat: Optional[Callable[[], None]] = None,
 ) -> Tuple[int, List[str]]:
     """
@@ -469,7 +482,7 @@ def save_extracted_records(
         else:
             first_by_name[record.user_name] = record
 
-    user_ids, user_warnings = ensure_users(db, first_by_name, heartbeat)
+    user_ids, user_warnings = ensure_users(db, first_by_name, owner_id, heartbeat)
     warnings.extend(user_warnings)
 
     # Explicit, strictly increasing created_at keeps the PDF's row order

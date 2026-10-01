@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../core/api_exception.dart';
 import '../models/bonus_calculation_summary.dart';
 import '../models/bonus_result.dart';
 import '../models/report_progress.dart';
@@ -25,23 +26,58 @@ class ReportRepository extends ChangeNotifier {
     required WhatsAppApiService whatsappApi,
     required LocalReportStore localStore,
     required ActivityLogStore activityLog,
+    required String? Function() currentUserId,
   })  : _reportsApi = reportsApi,
         _bonusApi = bonusApi,
         _whatsappApi = whatsappApi,
         _localStore = localStore,
-        _activityLog = activityLog;
+        _activityLog = activityLog,
+        _currentUserId = currentUserId;
 
   final ReportsApiService _reportsApi;
   final BonusApiService _bonusApi;
   final WhatsAppApiService _whatsappApi;
   final LocalReportStore _localStore;
   final ActivityLogStore _activityLog;
+  final String? Function() _currentUserId;
 
   /// Report ids for which a WhatsApp send has completed in this session —
   /// used only to know when to show WhatsApp status alongside results
   /// (see WhatsAppSendSummary, which is never persisted by the backend
   /// in a way this app can query later — see README "known gaps").
+  /// Belongs to [_sessionOwner] only; see [_sessionSummaries].
   final Map<String, WhatsAppSendSummary> _sessionWhatsAppSummaries = {};
+  String? _sessionOwner;
+
+  /// The in-memory summaries, emptied whenever the signed-in account is not
+  /// the one they were recorded for (logout, or a different login), so a
+  /// send done by one account is never shown to the next.
+  Map<String, WhatsAppSendSummary> get _sessionSummaries {
+    final user = _currentUserId();
+    if (user != _sessionOwner) {
+      _sessionWhatsAppSummaries.clear();
+      _sessionOwner = user;
+    }
+    return _sessionWhatsAppSummaries;
+  }
+
+  /// Runs a call that reads one report from the backend. If the backend
+  /// says that report does not exist for this account (deleted, or another
+  /// account's), it is dropped from the on-device history so the app stops
+  /// offering it — a stale id must not be retried forever. The error is
+  /// still thrown for the caller to handle. (FastAPI's bare "Not Found" is
+  /// a missing route on an older server, not a missing report, so it is
+  /// ignored here.)
+  Future<T> _forgetReportIfNotFound<T>(String reportId, Future<T> Function() call) async {
+    try {
+      return await call();
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.notFound && e.message != 'Not Found') {
+        await _localStore.removeReport(reportId);
+      }
+      rethrow;
+    }
+  }
 
   Future<UploadReportResponse> uploadReport({
     required List<int> fileBytes,
@@ -72,7 +108,8 @@ class ReportRepository extends ChangeNotifier {
 
   /// Live backend status of a report being processed in the background.
   Future<ReportProgress> getReportStatus(String reportId) async {
-    final progress = await _reportsApi.getReportStatus(reportId);
+    final progress =
+        await _forgetReportIfNotFound(reportId, () => _reportsApi.getReportStatus(reportId));
     // Keep the on-device history in step with what the backend really says,
     // so the Reports/Dashboard cards show the current status.
     await _localStore.upsertReport(
@@ -155,7 +192,7 @@ class ReportRepository extends ChangeNotifier {
   }
 
   Future<List<BonusResult>> getResults(String reportId) {
-    return _bonusApi.getResults(reportId);
+    return _forgetReportIfNotFound(reportId, () => _bonusApi.getResults(reportId));
   }
 
   Future<BonusResult> getUserResult(String reportId, String userId) {
@@ -164,7 +201,7 @@ class ReportRepository extends ChangeNotifier {
 
   Future<WhatsAppSendSummary> sendWhatsApp(String reportId, {bool force = false}) async {
     final summary = await _whatsappApi.sendWhatsAppForReport(reportId, force: force);
-    _sessionWhatsAppSummaries[reportId] = summary;
+    _sessionSummaries[reportId] = summary;
     await _activityLog.log(
       type: ActivityType.whatsappSent,
       reportId: reportId,
@@ -183,7 +220,7 @@ class ReportRepository extends ChangeNotifier {
   /// after a send, e.g. distinguishing "skipped_already_sent" from a
   /// plain "not_sent").
   String? sessionWhatsAppStatusFor(String reportId, String bonusResultId) {
-    final summary = _sessionWhatsAppSummaries[reportId];
+    final summary = _sessionSummaries[reportId];
     if (summary == null) return null;
     for (final result in summary.results) {
       if (result.bonusResultId == bonusResultId) return result.status;
@@ -191,7 +228,7 @@ class ReportRepository extends ChangeNotifier {
     return null;
   }
 
-  WhatsAppSendSummary? sessionWhatsAppSummaryFor(String reportId) => _sessionWhatsAppSummaries[reportId];
+  WhatsAppSendSummary? sessionWhatsAppSummaryFor(String reportId) => _sessionSummaries[reportId];
 
   Future<String?> getLastReportId() => _localStore.getLastReportId();
 

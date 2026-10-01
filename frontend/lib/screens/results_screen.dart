@@ -103,6 +103,16 @@ class _ResultsTabState extends State<ResultsTab> {
     });
   }
 
+  /// The backend says the shown report doesn't exist. The repository has
+  /// dropped it from the list, so switch to the next one (or the empty
+  /// state). If it was not dropped, keep showing the report's own error
+  /// instead of reloading it forever.
+  Future<void> _onReportMissing() async {
+    final next = await context.read<ReportRepository>().getLastReportId();
+    if (!mounted || next == _reportId) return;
+    setState(() => _reportId = next);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const LoadingView();
@@ -123,7 +133,16 @@ class _ResultsTabState extends State<ResultsTab> {
         ),
       );
     }
-    return _ResultsBody(reportId: _reportId!, showHeader: true);
+    return _ResultsBody(
+      // Keyed by report so a different report always gets a fresh load.
+      key: ValueKey(_reportId),
+      reportId: _reportId!,
+      showHeader: true,
+      // The report is gone (the repository has already dropped it from the
+      // on-device list): move on to the next most recent one, or to the
+      // empty state, rather than showing a dead end.
+      onReportMissing: _onReportMissing,
+    );
   }
 }
 
@@ -133,7 +152,16 @@ class _ResultsBody extends StatefulWidget {
   /// True when embedded as the Results tab (which has no AppBar of its own).
   final bool showHeader;
 
-  const _ResultsBody({required this.reportId, this.showHeader = false});
+  /// Called when the backend says this report does not exist (for this
+  /// account). When null the screen shows that as an error instead.
+  final VoidCallback? onReportMissing;
+
+  const _ResultsBody({
+    super.key,
+    required this.reportId,
+    this.showHeader = false,
+    this.onReportMissing,
+  });
 
   @override
   State<_ResultsBody> createState() => _ResultsBodyState();
@@ -171,10 +199,12 @@ class _ResultsBodyState extends State<_ResultsBody> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
+      final missing = e.kind == ApiErrorKind.notFound;
       setState(() {
-        _errorMessage = e.userMessage;
+        _errorMessage = missing ? 'This report is no longer available.' : e.userMessage;
         _loading = false;
       });
+      if (missing) widget.onReportMissing?.call();
     }
   }
 

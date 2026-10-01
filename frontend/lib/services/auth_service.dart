@@ -8,10 +8,9 @@ import '../core/api_exception.dart';
 /// referred to by the spec: Supabase Auth, which the project already uses
 /// for the database (Step 2).
 ///
-/// IMPORTANT (also in README): the FastAPI backend does not currently
-/// verify this session/token on its endpoints. The access token is still
-/// attached to every backend request (via ApiClient.setAuthToken) so the
-/// backend can start enforcing it later with zero Flutter-side changes.
+/// The access token is attached to every backend request (via
+/// ApiClient.setAuthToken); the FastAPI backend verifies it with Supabase
+/// Auth and scopes every report to the account that uploaded it.
 class AuthService {
   AuthService({supa.SupabaseClient? client})
       : _client = client ?? supa.Supabase.instance.client;

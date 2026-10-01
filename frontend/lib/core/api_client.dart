@@ -24,10 +24,9 @@ class ApiClient {
 
   final Dio _dio;
 
-  /// Optional bearer token, set by AuthRepository after a successful login.
-  /// The FastAPI backend does not verify this yet (see README), but it is
-  /// sent on every request so the backend can start enforcing it later
-  /// without any Flutter-side changes.
+  /// Bearer token, set by AuthRepository after a successful login and
+  /// removed on logout. The FastAPI backend verifies it on every report
+  /// endpoint and only serves the signed-in account's own reports.
   void setAuthToken(String? token) {
     if (token == null) {
       _dio.options.headers.remove('Authorization');

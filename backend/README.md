@@ -195,6 +195,16 @@ still exists (`ON DELETE RESTRICT`), to protect financial records.
 policies — only the backend's service-role key can read/write them
 directly.
 
+**Per-account access:** every `/reports/*` endpoint requires the Supabase
+session token (`Authorization: Bearer <access token>`), verified against
+Supabase Auth. `reports.owner_id` (and `users.owner_id`, so recipients are
+not shared between accounts) is set from that token on upload, and a report
+is only served to its owner or to an admin (`app_metadata.role = "admin"`,
+or an id in `ADMIN_USER_IDS`); anyone else gets the same 404 as for a missing
+report. Run `supabase/ownership_schema.sql` before deploying. Reports that
+existed before it have no owner and are admin-only until assigned (see that
+file).
+
 **Authorized access:** the `users` table above is for report *subjects*
 (bonus recipients), not app logins. Login/authorization for the staff who
 upload reports is intentionally left to Supabase's built-in Auth in a later

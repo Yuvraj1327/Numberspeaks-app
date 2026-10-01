@@ -14,8 +14,9 @@ compatibility; it refuses to run while the background job owns the report.
 import logging
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
+from app.core.auth import AuthUser, can_access_report, get_current_user
 from app.core.config import get_settings
 from app.db.supabase_client import SupabaseNotConfiguredError, get_supabase
 from app.schemas.report import ReportStatusResponse, UploadReportResponse
@@ -51,6 +52,7 @@ FINAL_STATUSES = ("completed", "failed")
 )
 def upload_report(
     file: UploadFile = File(..., description="The 'Party Profit Loss' PDF report"),
+    user: AuthUser = Depends(get_current_user),
 ) -> UploadReportResponse:
     # --- 1. Validate the upload is a PDF -----------------------------------
     filename = file.filename or "upload.pdf"
@@ -101,7 +103,7 @@ def upload_report(
         ) from exc
 
     try:
-        create_report(db, report_id, filename, storage_path)
+        create_report(db, report_id, filename, storage_path, owner_id=user.id)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to create report record %s: %s", report_id, safe_error(exc))
         try:
@@ -133,7 +135,7 @@ def upload_report(
     response_model=ReportStatusResponse,
     summary="Get a report's processing status",
 )
-def get_report_status(report_id: str) -> ReportStatusResponse:
+def get_report_status(report_id: str, user: AuthUser = Depends(get_current_user)) -> ReportStatusResponse:
     try:
         uuid.UUID(report_id)
     except ValueError:
@@ -153,7 +155,8 @@ def get_report_status(report_id: str) -> ReportStatusResponse:
             detail="Could not read report from the database.",
         ) from exc
 
-    if report is None:
+    # Someone else's report is reported exactly like a missing one.
+    if report is None or not can_access_report(report, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
 
     # A job that was lost to a restart is resumed here; the status returned
@@ -181,7 +184,7 @@ def get_report_status(report_id: str) -> ReportStatusResponse:
     response_model=ValidationSummary,
     summary="Validate a report's extracted rows before bonus calculation",
 )
-def validate_report(report_id: str) -> ValidationSummary:
+def validate_report(report_id: str, user: AuthUser = Depends(get_current_user)) -> ValidationSummary:
     try:
         db = get_supabase()
     except SupabaseNotConfiguredError as exc:
@@ -196,7 +199,8 @@ def validate_report(report_id: str) -> ValidationSummary:
             detail=f"Could not read report from the database: {exc}",
         ) from exc
 
-    if report is None:
+    # Someone else's report is reported exactly like a missing one.
+    if report is None or not can_access_report(report, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
 
     if report.get("status") in ("uploaded", *ACTIVE_STATUSES):

@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app.core.auth import AuthUser, get_current_user
 from app.main import app
 from app.schemas.report import ExtractedRecord
 from app.services import report_processor
@@ -58,12 +59,16 @@ class PipelineTestCase(unittest.TestCase):
         ]
         for p in self.patches:
             p.start()
+        # Endpoints require a signed-in user; tests act as `self.user`.
+        self.user = AuthUser(id="11111111-1111-1111-1111-111111111111", email="a@example.com")
+        app.dependency_overrides[get_current_user] = lambda: self.user
         self.client = TestClient(app)
         self.logs = _LogCapture()
         logging.getLogger("numberspeaks").addHandler(self.logs)
 
     def tearDown(self):
         logging.getLogger("numberspeaks").removeHandler(self.logs)
+        app.dependency_overrides.pop(get_current_user, None)
         for p in self.patches:
             p.stop()
 

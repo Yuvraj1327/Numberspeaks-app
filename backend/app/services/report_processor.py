@@ -166,7 +166,7 @@ def process_report(report_id: str) -> None:
     logger.info("Report %s: processing started (attempt %s)", report_id, report.get("attempts"))
 
     try:
-        _run_pipeline(db, report_id, report["file_path"])
+        _run_pipeline(db, report_id, report["file_path"], report.get("owner_id"))
     except _ReportFailed as exc:
         _fail(db, report_id, str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -185,7 +185,7 @@ def _fail(db: Client, report_id: str, message: str) -> None:
         logger.error("Could not mark report %s failed: %s", report_id, safe_error(exc))
 
 
-def _run_pipeline(db: Client, report_id: str, file_path: str) -> None:
+def _run_pipeline(db: Client, report_id: str, file_path: str, owner_id: Optional[str]) -> None:
     beat = _Heartbeat(db, report_id)
 
     # --- extraction (status: processing) --------------------------------------
@@ -204,7 +204,7 @@ def _run_pipeline(db: Client, report_id: str, file_path: str) -> None:
     )
 
     saved_count, save_warnings = save_extracted_records(
-        db, report_id, extraction.records, heartbeat=beat.tick
+        db, report_id, extraction.records, owner_id, heartbeat=beat.tick
     )
     warnings = _cap_warnings([*extraction.warnings, *save_warnings])
     if saved_count == 0:

@@ -137,6 +137,9 @@ class FakeSupabase:
             elif op == "in":
                 if str(row.get(col)) not in _parse_in(val):
                     return False
+            elif op == "is":
+                if val != "null" or row.get(col) is not None:
+                    return False
             else:
                 raise NotImplementedError(op)
         return True

@@ -8,8 +8,9 @@ what was already computed, it never calculates anything itself.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.core.auth import AuthUser, can_access_report, get_current_user
 from app.db.supabase_client import SupabaseNotConfiguredError, get_supabase
 from app.schemas.whatsapp import WhatsAppSendSummary
 from app.services.reports_service import get_report
@@ -32,6 +33,7 @@ async def send_whatsapp_for_report(
         False,
         description="Resend even to users who already have a successfully sent message for this report.",
     ),
+    user: AuthUser = Depends(get_current_user),
 ) -> WhatsAppSendSummary:
     try:
         db = get_supabase()
@@ -47,7 +49,8 @@ async def send_whatsapp_for_report(
             detail=f"Could not read report from the database: {exc}",
         ) from exc
 
-    if report is None:
+    # Someone else's report is reported exactly like a missing one.
+    if report is None or not can_access_report(report, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
 
     if report.get("status") != "completed":

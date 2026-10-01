@@ -16,8 +16,9 @@ returns False again — nothing here invents a number in its place.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.auth import AuthUser, can_access_report, get_current_user
 from app.db.supabase_client import SupabaseNotConfiguredError, get_supabase
 from app.schemas.bonus import BonusCalculationSummary, BonusResult
 from app.services.bonus_calculator import BonusFormulaNotConfiguredError
@@ -46,7 +47,7 @@ def _get_db():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
-def _get_report_or_404(db, report_id: str) -> dict:
+def _get_report_or_404(db, report_id: str, user: AuthUser) -> dict:
     try:
         report = get_report(db, report_id)
     except Exception as exc:  # noqa: BLE001
@@ -56,7 +57,8 @@ def _get_report_or_404(db, report_id: str) -> dict:
             detail=f"Could not read report from the database: {exc}",
         ) from exc
 
-    if report is None:
+    # Someone else's report is reported exactly like a missing one.
+    if report is None or not can_access_report(report, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
     return report
 
@@ -66,9 +68,9 @@ def _get_report_or_404(db, report_id: str) -> dict:
     response_model=BonusCalculationSummary,
     summary="Calculate and save the bonus for every user in a validated report",
 )
-def calculate_bonus_for_report(report_id: str) -> BonusCalculationSummary:
+def calculate_bonus_for_report(report_id: str, user: AuthUser = Depends(get_current_user)) -> BonusCalculationSummary:
     db = _get_db()
-    report = _get_report_or_404(db, report_id)
+    report = _get_report_or_404(db, report_id, user)
 
     if report.get("status") in ACTIVE_STATUSES:
         raise HTTPException(
@@ -131,9 +133,9 @@ def calculate_bonus_for_report(report_id: str) -> BonusCalculationSummary:
     response_model=list[BonusResult],
     summary="Get bonus results for a report",
 )
-def get_report_results(report_id: str) -> list[BonusResult]:
+def get_report_results(report_id: str, user: AuthUser = Depends(get_current_user)) -> list[BonusResult]:
     db = _get_db()
-    _get_report_or_404(db, report_id)
+    _get_report_or_404(db, report_id, user)
 
     try:
         # The latest WhatsApp status of every row comes back in the same
@@ -158,9 +160,9 @@ def get_report_results(report_id: str) -> list[BonusResult]:
     response_model=BonusResult,
     summary="Get one user's bonus result for a report",
 )
-def get_user_result(report_id: str, user_id: str) -> BonusResult:
+def get_user_result(report_id: str, user_id: str, user: AuthUser = Depends(get_current_user)) -> BonusResult:
     db = _get_db()
-    _get_report_or_404(db, report_id)
+    _get_report_or_404(db, report_id, user)
 
     try:
         row = get_bonus_result_for_user(db, report_id, user_id)

@@ -70,9 +70,28 @@ class LocalReportEntry {
 /// just a single "last report" pointer, so the Reports tab can show
 /// several recent uploads — still nothing more than a local receipt of
 /// uploads this device actually made.
+///
+/// Everything is stored under the signed-in account's id (see [_userId]), so
+/// one account can never read — or open by id — another account's reports
+/// on a shared device. With nobody signed in, reads are empty and writes are
+/// ignored. The old un-scoped list (written before this, with no way to tell
+/// whose reports it held) is deleted the first time the store is used.
 class LocalReportStore {
-  static const _recentReportsKey = 'recent_reports_v1';
+  LocalReportStore({required String? Function() userId}) : _userId = userId;
+
+  /// The id of whoever is signed in right now (null when signed out) —
+  /// looked up on every call rather than remembered, so a store can never
+  /// act for a previous account.
+  final String? Function() _userId;
+
+  static const _legacyKey = 'recent_reports_v1';
+  static const _recentReportsKey = 'recent_reports_v2';
   static const _maxHistory = 10;
+
+  String? get _key {
+    final id = _userId();
+    return id == null || id.isEmpty ? null : '$_recentReportsKey:$id';
+  }
 
   /// Creates or updates one report's entry and moves it to the front of
   /// the history (most-recently-touched first). `fileName` can be omitted
@@ -89,8 +108,10 @@ class LocalReportStore {
     int? bonusEligibleCount,
     double? totalBonus,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = await _readList(prefs);
+    final key = _key;
+    if (key == null) return;
+    final prefs = await _prefs();
+    final list = await _readList(prefs, key);
 
     final existingIndex = list.indexWhere((e) => e.reportId == reportId);
     final existing = existingIndex >= 0 ? list[existingIndex] : null;
@@ -111,13 +132,26 @@ class LocalReportStore {
     );
     if (list.length > _maxHistory) list.removeRange(_maxHistory, list.length);
 
-    await _writeList(prefs, list);
+    await _writeList(prefs, key, list);
   }
 
-  /// Every tracked report, most-recently-touched first.
+  /// Forgets a report the backend says no longer exists (or is not this
+  /// account's), so the app stops offering to open it.
+  Future<void> removeReport(String reportId) async {
+    final key = _key;
+    if (key == null) return;
+    final prefs = await _prefs();
+    final list = await _readList(prefs, key);
+    final kept = list.where((e) => e.reportId != reportId).toList();
+    if (kept.length != list.length) await _writeList(prefs, key, kept);
+  }
+
+  /// Every tracked report of the signed-in account, most-recently-touched first.
   Future<List<LocalReportEntry>> getRecentReports() async {
-    final prefs = await SharedPreferences.getInstance();
-    return _readList(prefs);
+    final key = _key;
+    if (key == null) return [];
+    final prefs = await _prefs();
+    return _readList(prefs, key);
   }
 
   /// The most recently touched report's id, if any — used wherever the
@@ -138,12 +172,20 @@ class LocalReportStore {
   }
 
   Future<void> clear() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_recentReportsKey);
+    final key = _key;
+    if (key == null) return;
+    final prefs = await _prefs();
+    await prefs.remove(key);
   }
 
-  Future<List<LocalReportEntry>> _readList(SharedPreferences prefs) async {
-    final raw = prefs.getString(_recentReportsKey);
+  Future<SharedPreferences> _prefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.containsKey(_legacyKey)) await prefs.remove(_legacyKey);
+    return prefs;
+  }
+
+  Future<List<LocalReportEntry>> _readList(SharedPreferences prefs, String key) async {
+    final raw = prefs.getString(key);
     if (raw == null || raw.isEmpty) return [];
     try {
       final decoded = jsonDecode(raw) as List<dynamic>;
@@ -158,8 +200,8 @@ class LocalReportStore {
     }
   }
 
-  Future<void> _writeList(SharedPreferences prefs, List<LocalReportEntry> list) async {
+  Future<void> _writeList(SharedPreferences prefs, String key, List<LocalReportEntry> list) async {
     final raw = jsonEncode(list.map((e) => e.toJson()).toList());
-    await prefs.setString(_recentReportsKey, raw);
+    await prefs.setString(key, raw);
   }
 }

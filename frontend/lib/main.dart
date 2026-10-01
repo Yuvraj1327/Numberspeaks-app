@@ -59,13 +59,20 @@ class NumberspeaksApp extends StatelessWidget {
           ),
         ),
         ChangeNotifierProvider<ReportRepository>(
-          create: (_) => ReportRepository(
-            reportsApi: ReportsApiService(apiClient),
-            bonusApi: BonusApiService(apiClient),
-            whatsappApi: WhatsAppApiService(apiClient),
-            localStore: LocalReportStore(),
-            activityLog: ActivityLogStore(),
-          ),
+          create: (context) {
+            // Everything the report layer keeps on the device is tied to
+            // whoever is signed in at the moment it is used.
+            final auth = context.read<AuthRepository>();
+            String? currentUserId() => auth.userId;
+            return ReportRepository(
+              reportsApi: ReportsApiService(apiClient),
+              bonusApi: BonusApiService(apiClient),
+              whatsappApi: WhatsAppApiService(apiClient),
+              localStore: LocalReportStore(userId: currentUserId),
+              activityLog: ActivityLogStore(userId: currentUserId),
+              currentUserId: currentUserId,
+            );
+          },
         ),
       ],
       child: MaterialApp(
