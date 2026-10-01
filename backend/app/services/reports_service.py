@@ -285,6 +285,21 @@ def create_report(db: Client, report_id: str, file_name: str, file_path: str, ow
     return res.data[0]
 
 
+def delete_report(db: Client, report: dict) -> None:
+    """
+    Permanently deletes a report: its PDF in storage, then the report row,
+    which cascades to its extracted rows, bonus results and WhatsApp send
+    history. People (the `users` rows) are kept — they may also appear in
+    the account's other reports. The file goes first: if it can't be
+    removed the row stays and the delete can simply be retried, instead of
+    leaving an unreachable file behind.
+    """
+    file_path = report.get("file_path")
+    if file_path:
+        db.storage.from_(REPORTS_BUCKET).remove([file_path])
+    db.table("reports").delete().eq("id", report["id"]).execute()
+
+
 def update_report_status(db: Client, report_id: str, status: str) -> None:
     db.table("reports").update({"status": status}).eq("id", report_id).execute()
 

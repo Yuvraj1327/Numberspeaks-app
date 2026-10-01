@@ -32,6 +32,9 @@ class ReportsApiService {
     return list.whereType<Map<String, dynamic>>().toList();
   }
 
+  /// DELETE /api/v1/reports/{report_id} — the report, its PDF and all results.
+  Future<void> deleteReport(String reportId) => _client.delete('/reports/$reportId');
+
   /// GET /api/v1/reports/{report_id}/status — the background-processing
   /// progress of an uploaded report.
   Future<ReportProgress> getReportStatus(String reportId) async {

@@ -88,6 +88,15 @@ class ApiClient {
     }
   }
 
+  /// DELETE a resource; the server answers 204 with no body.
+  Future<void> delete(String path) async {
+    try {
+      await _dio.delete<dynamic>(path);
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
   /// Multipart PDF upload with progress reporting.
   Future<Map<String, dynamic>> uploadPdf(
     String path, {

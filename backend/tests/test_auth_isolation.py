@@ -135,6 +135,39 @@ class IsolationTests(PipelineTestCase):
         self.assertEqual(self.api("get", "/reports").json(), [])
         self.assertEqual({r["report_id"] for r in self.api("get", "/reports?all=true").json()}, {a, b})
 
+    def test_delete_removes_the_report_its_pdf_and_results_for_the_owner_only(self):
+        a = self.upload_as(USER_A)
+        b = self.upload_as(USER_B)
+        file_key = ("reports", next(r for r in self.db.tables["reports"] if r["id"] == a)["file_path"])
+        self.assertIn(file_key, self.db.files)
+
+        # Another account can't delete it, and can't tell it exists.
+        self.user = USER_B
+        self.assertEqual(self.api("delete", f"/reports/{a}").status_code, 404)
+        self.assertEqual(len(self.db.tables["reports"]), 2)
+
+        self.user = USER_A
+        self.assertEqual(self.api("delete", f"/reports/{a}").status_code, 204)
+        self.assertNotIn(file_key, self.db.files)
+        self.assertEqual([r["id"] for r in self.db.tables["reports"]], [b])
+        self.assertTrue(all(r["report_id"] == b for r in self.db.tables["bonus_results"]))
+        self.assertEqual(self.api("get", f"/reports/{a}/results").status_code, 404)
+        self.assertEqual(self.api("get", "/reports").json(), [])
+        self.assertEqual(self.api("delete", f"/reports/{a}").status_code, 404)  # already gone
+
+        # B's data is untouched; an admin may delete any report.
+        self.user = USER_B
+        self.assertEqual(len(self.api("get", f"/reports/{b}/results").json()), 2)
+        self.user = ADMIN
+        self.assertEqual(self.api("delete", f"/reports/{b}").status_code, 204)
+
+    def test_report_still_processing_cannot_be_deleted(self):
+        self.user = USER_A
+        with patch("app.api.v1.endpoints.reports.submit_report"):
+            report_id = self.upload(b"%PDF-1.4 x").json()["report_id"]
+        self.assertEqual(self.api("delete", f"/reports/{report_id}").status_code, 409)
+        self.assertEqual(len(self.db.tables["reports"]), 1)
+
     def test_results_of_a_report_that_does_not_exist_is_404(self):
         self.user = USER_A
         r = self.api("get", f"/reports/{uuid.uuid4()}/results")
@@ -175,7 +208,7 @@ class TokenVerificationTests(unittest.TestCase):
     def test_missing_token_is_401_on_every_report_endpoint(self):
         rid = uuid.uuid4()
         for method, path in [
-            ("post", "/reports/upload"), ("get", "/reports"), ("get", f"/reports/{rid}/status"),
+            ("post", "/reports/upload"), ("get", "/reports"), ("delete", f"/reports/{rid}"), ("get", f"/reports/{rid}/status"),
             ("post", f"/reports/{rid}/validate"), ("post", f"/reports/{rid}/calculate-bonus"),
             ("get", f"/reports/{rid}/results"), ("get", f"/reports/{rid}/results/{rid}"),
             ("post", f"/reports/{rid}/send-whatsapp"),

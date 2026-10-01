@@ -14,7 +14,7 @@ compatibility; it refuses to run while the background job owns the report.
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 
 from app.core.auth import AuthUser, can_access_report, get_current_user
 from app.core.config import get_settings
@@ -28,6 +28,8 @@ from app.services.reports_service import (
     bonus_result_row_to_raw,
     create_report,
     default_row_reference,
+    delete_report,
+    is_report_stale,
     get_bonus_results_for_report,
     get_report,
     list_reports,
@@ -284,3 +286,53 @@ def validate_report(report_id: str, user: AuthUser = Depends(get_current_user)) 
         valid_records=result.valid_records,
         invalid_records=result.invalid_records,
     )
+
+
+@router.delete(
+    "/{report_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a report, its PDF and all of its results",
+)
+def delete_report_endpoint(report_id: str, user: AuthUser = Depends(get_current_user)) -> Response:
+    try:
+        uuid.UUID(report_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
+
+    try:
+        db = get_supabase()
+    except SupabaseNotConfiguredError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    try:
+        report = get_report(db, report_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to look up report %s: %s", report_id, safe_error(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not read report from the database.",
+        ) from exc
+
+    # Someone else's report is reported exactly like a missing one.
+    if report is None or not can_access_report(report, user):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
+
+    # A report a worker is still processing can't be removed from under it;
+    # one whose worker died (stale) can.
+    if report.get("status") in ("uploaded", *ACTIVE_STATUSES) and not is_report_stale(report):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This report is still being processed. Wait for it to finish, then delete it.",
+        )
+
+    try:
+        delete_report(db, report)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to delete report %s: %s", report_id, safe_error(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not delete the report. Please try again.",
+        ) from exc
+
+    logger.info("Report %s deleted", report_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

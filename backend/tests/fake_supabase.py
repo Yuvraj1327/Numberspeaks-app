@@ -61,6 +61,10 @@ class _Query:
         self.op, self.payload, self.on_conflict = "upsert", payload, on_conflict
         return self
 
+    def delete(self):
+        self.op = "delete"
+        return self
+
     def update(self, payload):
         self.op, self.payload = "update", payload
         return self
@@ -208,6 +212,18 @@ class FakeSupabase:
                     else:
                         out.append(dict(self._insert_one(q.table, dict(item))))
                 return _Result(out)
+
+            if q.op == "delete":
+                hit = [r for r in rows if self._match(r, q.filters)]
+                for r in hit:
+                    rows.remove(r)
+                    if q.table == "reports":  # ON DELETE CASCADE
+                        gone = {b["id"] for b in self.tables["bonus_results"] if b["report_id"] == r["id"]}
+                        self.tables["bonus_results"] = [
+                            b for b in self.tables["bonus_results"] if b["id"] not in gone]
+                        self.tables["whatsapp_messages"] = [
+                            m for m in self.tables["whatsapp_messages"] if m["bonus_result_id"] not in gone]
+                return _Result([dict(r) for r in hit])
 
             if q.op == "update":
                 hit = [r for r in rows if self._match(r, q.filters)]

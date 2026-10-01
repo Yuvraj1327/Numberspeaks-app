@@ -196,6 +196,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
   _FilterOption _filter = _FilterOption.all;
   bool _sendingWhatsApp = false;
   bool _retrying = false;
+  bool _deleting = false;
 
   @override
   void initState() {
@@ -294,6 +295,71 @@ class _ResultsBodyState extends State<_ResultsBody> {
     }
   }
 
+  Future<void> _deleteReport() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this report?'),
+        content: const Text(
+          'The uploaded PDF and all of its bonus results will be permanently deleted. '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deleting = true);
+    final repo = context.read<ReportRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await repo.deleteReport(widget.reportId);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _deleting = false);
+      messenger.showSnackBar(SnackBar(content: Text(e.userMessage), backgroundColor: AppTheme.danger));
+      return;
+    }
+    messenger.showSnackBar(const SnackBar(content: Text('Report deleted.')));
+    if (!mounted) return;
+    if (widget.showHeader) {
+      // Results tab: it moves on to the next report (or the empty state)
+      // by itself, because the repository announces the deletion.
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  Widget _deleteButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _deleting ? null : _deleteReport,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.danger,
+            side: const BorderSide(color: AppTheme.danger),
+          ),
+          icon: _deleting
+              ? const SizedBox(
+                  height: 16,
+                  width: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.danger),
+                )
+              : const Icon(Icons.delete_outline),
+          label: Text(_deleting ? 'Deleting…' : 'Delete Report'),
+        ),
+      ),
+    );
+  }
+
   void _showWhatsAppSummary(int sent, int failed, int skipped) {
     showDialog<void>(
       context: context,
@@ -332,6 +398,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
               const ScreenHeader(eyebrow: 'Bonus overview', title: 'Results'),
             const SizedBox(height: 120),
             const EmptyView(message: 'No bonus results yet for this report.'),
+            const SizedBox(height: AppSpacing.lg),
+            _deleteButton(),
           ],
         ),
       );
@@ -427,6 +495,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
             ),
           ),
         ),
+        const SizedBox(height: AppSpacing.sm),
+        _deleteButton(),
         const SizedBox(height: AppSpacing.xs),
         Expanded(
           child: visible.isEmpty

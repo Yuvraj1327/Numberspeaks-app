@@ -150,6 +150,20 @@ class ReportRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Permanently deletes a report (and its PDF and results) from the
+  /// account, then drops it from the on-device list. A report the backend
+  /// no longer has counts as already deleted.
+  Future<void> deleteReport(String reportId) async {
+    try {
+      await _reportsApi.deleteReport(reportId);
+    } on ApiException catch (e) {
+      if (e.kind != ApiErrorKind.notFound) rethrow;
+    }
+    await _localStore.removeReport(reportId);
+    _sessionWhatsAppSummaries.remove(reportId);
+    notifyListeners();
+  }
+
   Future<ValidationSummary> validateReport(String reportId) async {
     final summary = await _reportsApi.validateReport(reportId);
     // Scoped to this specific reportId (not just "whatever was last
