@@ -4,31 +4,86 @@ import 'package:provider/provider.dart';
 import '../core/api_exception.dart';
 import '../core/app_theme.dart';
 import '../core/formatters.dart';
-import '../models/bonus_calculation_summary.dart';
-import '../models/validation_summary.dart';
+import '../models/bonus_result.dart';
+import '../models/report_progress.dart';
 import '../repositories/report_repository.dart';
 import '../routing/app_routes.dart';
+import '../widgets/screen_header.dart';
 
-enum _Step { validating, calculating, completed, failed }
+/// The stages a report moves through, in order. Every stage except
+/// [saving] corresponds to a real backend status (`processing`,
+/// `validating`, `calculating`, `completed`); [uploaded] is already true by
+/// the time this screen opens. The backend has no separate "saving" status
+/// (results are written as part of calculating and are complete once the
+/// report reads `completed`), so [saving] is shown as done only at that
+/// point — it is never shown as in progress, because nothing reports that.
+enum _Stage { uploaded, processing, validating, calculating, saving, completed }
+
+extension on _Stage {
+  String get label {
+    switch (this) {
+      case _Stage.uploaded:
+        return 'Uploaded';
+      case _Stage.processing:
+        return 'Processing';
+      case _Stage.validating:
+        return 'Validating';
+      case _Stage.calculating:
+        return 'Calculating';
+      case _Stage.saving:
+        return 'Saving Results';
+      case _Stage.completed:
+        return 'Completed';
+    }
+  }
+
+  String get headline {
+    switch (this) {
+      case _Stage.uploaded:
+      case _Stage.processing:
+        return 'Processing your report';
+      case _Stage.validating:
+        return 'Validating records';
+      case _Stage.calculating:
+        return 'Calculating bonuses';
+      case _Stage.saving:
+        return 'Saving results';
+      case _Stage.completed:
+        return 'Processing complete';
+    }
+  }
+
+  String get detail {
+    switch (this) {
+      case _Stage.uploaded:
+      case _Stage.processing:
+        return 'Reading the PDF and extracting every user row…';
+      case _Stage.validating:
+        return 'Checking each row for missing or invalid values…';
+      case _Stage.calculating:
+        return 'Working out the bonus for every user…';
+      case _Stage.saving:
+        return 'Storing the final results…';
+      case _Stage.completed:
+        return 'Your results are ready.';
+    }
+  }
+}
 
 /// Screen 4 — Report Processing.
 ///
-/// The backend has no single "check report status" or progress-polling
-/// endpoint (Steps 3-6 only expose the actions themselves), so this screen
-/// self-orchestrates the two real calls that turn an uploaded report into
-/// calculated results — POST /validate, then POST /calculate-bonus — and
-/// shows only states that correspond to an actual in-flight or completed
-/// call. Nothing here is a fabricated progress bar.
+/// Two backends are supported, chosen at runtime by what the server
+/// actually offers (never assumed):
 ///
-/// "Uploading" (the report file itself) already happened on the previous
-/// screen; this screen picks up from there — "Processing" is simply the
-/// name for what this screen as a whole is doing (validating, then
-/// calculating), not a separate backend call.
+///  - Background processing: the server queues the report on upload and
+///    exposes `GET /reports/{id}/status`. This screen polls that and shows
+///    exactly the status the server reports.
+///  - Manual (older servers without `/status`): this screen drives the two
+///    real calls itself — `POST /validate`, then `POST /calculate-bonus` —
+///    and shows a stage as active only while its call is really in flight.
 ///
 /// A request that times out is NOT shown as "Failed" — a timeout means the
-/// server never told us the outcome, not that the outcome was bad. It gets
-/// its own distinct state with its own wording and color, so nobody reads
-/// "Failed" for a report that may well have gone through.
+/// server never told us the outcome, not that the outcome was bad.
 class ReportProcessingScreen extends StatefulWidget {
   final String reportId;
 
@@ -39,15 +94,25 @@ class ReportProcessingScreen extends StatefulWidget {
 }
 
 class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
-  _Step _step = _Step.validating;
-  // Which step (validating or calculating) actually failed, so the stage
-  // rows can tell "this step failed" apart from "this step never ran" —
-  // both would otherwise land under the same `_Step.failed` value.
-  _Step? _failedAtStep;
+  static const _pollInterval = Duration(seconds: 2);
+  // Consecutive failed status polls tolerated before giving up (each poll
+  // already retries internally), so a brief server restart doesn't abort.
+  static const _maxPollFailures = 5;
+
+  _Stage _active = _Stage.processing;
+  _Stage? _failedAt;
+  bool _allDone = false;
   bool _isTimeout = false;
   String? _errorMessage;
-  ValidationSummary? _validationSummary;
-  BonusCalculationSummary? _bonusSummary;
+  // True when the *backend itself* reported `failed` — Try Again then
+  // re-runs the manual validate/calculate path rather than re-polling a
+  // status that will never change.
+  bool _backendFailed = false;
+  ReportProgress? _progress;
+
+  // Final results (for the completion summary). Null = not loaded.
+  List<BonusResult>? _results;
+  bool _loadingResults = false;
 
   @override
   void initState() {
@@ -55,80 +120,179 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
     _run();
   }
 
-  Future<void> _run() async {
+  bool get _running => !_allDone && _failedAt == null;
+
+  Future<void> _run({bool manual = false}) async {
     setState(() {
-      _step = _Step.validating;
-      _failedAtStep = null;
+      _active = _Stage.processing;
+      _failedAt = null;
+      _allDone = false;
       _isTimeout = false;
       _errorMessage = null;
+      _results = null;
     });
 
+    if (!manual) {
+      final handled = await _followBackendStatus();
+      if (handled) return;
+    }
+    await _runManually();
+  }
+
+  // --- Background processing: poll the real status ------------------------
+
+  /// Returns true if the server supports `/status` (and this method took
+  /// the run to a final state), false if the manual flow should be used.
+  Future<bool> _followBackendStatus() async {
     final repo = context.read<ReportRepository>();
+    var failures = 0;
 
-    // --- Step 1: validate -------------------------------------------------
-    ValidationSummary validation;
+    while (mounted) {
+      ReportProgress progress;
+      try {
+        progress = await repo.getReportStatus(widget.reportId);
+        failures = 0;
+      } on ApiException catch (e) {
+        // Older servers have no /status route: FastAPI's generic 404
+        // ("Not Found"), unlike the real "No report found with id …".
+        if (e.kind == ApiErrorKind.notFound && e.message == 'Not Found') return false;
+        if (!mounted) return true;
+        failures++;
+        if (failures >= _maxPollFailures || e.kind == ApiErrorKind.notFound) {
+          _fail(e);
+          return true;
+        }
+        await Future<void>.delayed(_pollInterval);
+        continue;
+      }
+      if (!mounted) return true;
+
+      setState(() => _progress = progress);
+
+      switch (progress.status) {
+        case 'completed':
+          await _finish(progress.status);
+          return true;
+        case 'failed':
+          setState(() {
+            _failedAt = _active;
+            _backendFailed = true;
+            _isTimeout = false;
+            _errorMessage = (progress.errorMessage?.isNotEmpty ?? false)
+                ? progress.errorMessage
+                : 'The report could not be processed.';
+          });
+          return true;
+        case 'validated':
+          // Validated through the manual endpoints and waiting for the
+          // bonus step — nothing is running server-side to wait for.
+          return false;
+        case 'validating':
+          setState(() => _active = _Stage.validating);
+          break;
+        case 'calculating':
+          setState(() => _active = _Stage.calculating);
+          break;
+        default: // uploaded | processing
+          setState(() => _active = _Stage.processing);
+      }
+      await Future<void>.delayed(_pollInterval);
+    }
+    return true;
+  }
+
+  // --- Manual flow for servers without background processing --------------
+
+  Future<void> _runManually() async {
+    final repo = context.read<ReportRepository>();
+    final alreadyValidated = _progress?.status == 'validated';
+
+    if (!alreadyValidated) {
+      setState(() => _active = _Stage.validating);
+      try {
+        final validation = await repo.validateReport(widget.reportId);
+        if (!mounted) return;
+        if (validation.status != 'validated') {
+          setState(() {
+            _failedAt = _Stage.validating;
+            _isTimeout = false;
+            _errorMessage = validation.validCount == 0
+                ? 'None of the ${validation.totalInputRecords} extracted row(s) passed validation.'
+                : 'Validation did not complete successfully.';
+          });
+          return;
+        }
+      } on ApiException catch (e) {
+        if (mounted) _fail(e, at: _Stage.validating);
+        return;
+      }
+    }
+
+    setState(() => _active = _Stage.calculating);
     try {
-      validation = await repo.validateReport(widget.reportId);
+      final bonus = await repo.calculateBonus(widget.reportId);
+      if (!mounted) return;
+      if (bonus.status != 'completed') {
+        setState(() {
+          _failedAt = _Stage.calculating;
+          _isTimeout = false;
+          _errorMessage = 'Bonus calculation did not complete successfully.';
+        });
+        return;
+      }
+      // calculateBonus already recorded history/activity for this run.
+      setState(() {
+        _results = bonus.results;
+        _allDone = true;
+      });
     } on ApiException catch (e) {
+      if (mounted) _fail(e, at: _Stage.calculating);
+    }
+  }
+
+  // --- Shared ---------------------------------------------------------------
+
+  void _fail(ApiException e, {_Stage? at}) {
+    setState(() {
+      _failedAt = at ?? _active;
+      _isTimeout = e.kind == ApiErrorKind.timeout;
+      _errorMessage = e.userMessage;
+    });
+  }
+
+  /// The backend says `completed`: load the real results for the summary.
+  /// A failure to load them doesn't undo the completed report.
+  Future<void> _finish(String status) async {
+    final repo = context.read<ReportRepository>();
+    setState(() {
+      _allDone = true;
+      _loadingResults = true;
+    });
+    try {
+      final results = await repo.getResults(widget.reportId);
+      await repo.recordBackgroundRunFinished(widget.reportId, status: status, results: results);
       if (!mounted) return;
       setState(() {
-        _step = _Step.failed;
-        _failedAtStep = _Step.validating;
-        _isTimeout = e.kind == ApiErrorKind.timeout;
-        _errorMessage = e.userMessage;
+        _results = results;
+        _loadingResults = false;
       });
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() => _validationSummary = validation);
-
-    if (validation.status != 'validated') {
-      // Backend set status to "failed" — e.g. no valid rows in the report.
-      // This is a real, confirmed outcome (not a timeout), so it's shown
-      // as an actual failure.
-      setState(() {
-        _step = _Step.failed;
-        _failedAtStep = _Step.validating;
-        _isTimeout = false;
-        _errorMessage = validation.validCount == 0
-            ? 'None of the ${validation.totalInputRecords} extracted row(s) passed validation.'
-            : 'Validation did not complete successfully.';
-      });
-      return;
-    }
-
-    // --- Step 2: calculate bonus ------------------------------------------
-    setState(() => _step = _Step.calculating);
-
-    BonusCalculationSummary bonus;
-    try {
-      bonus = await repo.calculateBonus(widget.reportId);
-    } on ApiException catch (e) {
+    } on ApiException {
       if (!mounted) return;
-      setState(() {
-        _step = _Step.failed;
-        _failedAtStep = _Step.calculating;
-        _isTimeout = e.kind == ApiErrorKind.timeout;
-        _errorMessage = e.userMessage;
-      });
-      return;
+      setState(() => _loadingResults = false);
     }
+  }
 
-    if (!mounted) return;
-    setState(() => _bonusSummary = bonus);
-
-    if (bonus.status != 'completed') {
-      setState(() {
-        _step = _Step.failed;
-        _failedAtStep = _Step.calculating;
-        _isTimeout = false;
-        _errorMessage = 'Bonus calculation did not complete successfully.';
-      });
-      return;
+  _StageState _stateFor(_Stage stage) {
+    if (_allDone) return _StageState.done;
+    final failedAt = _failedAt;
+    if (failedAt != null) {
+      if (stage.index < failedAt.index) return _StageState.done;
+      if (stage == failedAt) return _isTimeout ? _StageState.timeout : _StageState.error;
+      return _StageState.pending;
     }
-
-    setState(() => _step = _Step.completed);
+    if (stage.index < _active.index) return _StageState.done;
+    if (stage == _active) return _StageState.active;
+    return _StageState.pending;
   }
 
   @override
@@ -138,126 +302,207 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            _buildStatusCard(context),
+            const SizedBox(height: AppSpacing.md),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.lg - 4, vertical: AppSpacing.sm),
+                child: Column(
+                  children: [
+                    for (final stage in _Stage.values)
+                      _StageRow(
+                        label: stage.label,
+                        state: _stateFor(stage),
+                        isLast: stage == _Stage.values.last,
+                      ),
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: AppSpacing.lg),
-            _StageRow(
-              label: 'Validating',
-              state: _stateFor(_Step.validating),
-            ),
-            _StageRow(
-              label: 'Calculating',
-              state: _stateFor(_Step.calculating),
-            ),
-            _StageRow(
-              label: _stageThreeLabel,
-              state: _stageThreeState,
-            ),
-            const SizedBox(height: AppSpacing.xl),
-            if (_step == _Step.failed && _errorMessage != null) ...[
-              if (_isTimeout)
-                Container(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: AppTheme.warning.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    children: [
-                      const Icon(Icons.schedule_outlined, color: AppTheme.warning, size: 28),
-                      const SizedBox(height: AppSpacing.sm),
-                      Text(
-                        _errorMessage!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        'This does not necessarily mean it failed — the server may still '
-                        'be working on it. Try again to check.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
-                      ),
-                    ],
-                  ),
-                )
-              else
-                Text(
-                  _errorMessage!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: AppTheme.danger),
-                ),
-              if (_validationSummary != null && _validationSummary!.invalidCount > 0) ...[
-                const SizedBox(height: AppSpacing.sm),
-                Text(
-                  '${_validationSummary!.invalidCount} row(s) had validation issues.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
-                ),
-              ],
-              const SizedBox(height: AppSpacing.lg),
-              OutlinedButton(onPressed: _run, child: const Text('Try Again')),
-            ],
-            if (_step == _Step.completed) _buildCompletionSummary(context),
+            if (_failedAt != null && _errorMessage != null) _buildFailure(context),
+            if (_allDone) _buildCompletion(context),
           ],
         ),
       ),
     );
   }
 
-  String get _stageThreeLabel {
-    if (_step == _Step.failed) return _isTimeout ? 'Timed out' : 'Failed';
-    return 'Completed';
+  /// The big "what is happening right now" card at the top.
+  Widget _buildStatusCard(BuildContext context) {
+    final failed = _failedAt != null;
+    final Color color = failed
+        ? (_isTimeout ? AppTheme.warning : AppTheme.danger)
+        : _allDone
+            ? AppTheme.success
+            : AppTheme.primary;
+    final IconData icon = failed
+        ? (_isTimeout ? Icons.schedule_outlined : Icons.error_outline)
+        : _allDone
+            ? Icons.check_circle_outline
+            : Icons.auto_graph_rounded;
+
+    final title = failed
+        ? (_isTimeout ? 'Taking longer than expected' : 'Processing failed')
+        : _allDone
+            ? _Stage.completed.headline
+            : _active.headline;
+    final detail = failed
+        ? 'Stopped at: ${(_failedAt ?? _active).label}'
+        : _allDone
+            ? _Stage.completed.detail
+            : _active.detail;
+
+    final progress = _progress;
+    final facts = <String>[
+      if (progress != null && progress.pagesProcessed > 0) '${progress.pagesProcessed} page(s) read',
+      if (progress != null && progress.totalRecords > 0) '${progress.totalRecords} record(s) found',
+    ];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          children: [
+            IconBadge(icon: icon, color: color, size: 64),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontSize: 22, fontWeight: FontWeight.w900, color: AppTheme.navy),
+            ),
+            const SizedBox(height: AppSpacing.xs + 2),
+            Text(detail, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
+            if (facts.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                facts.join('  •  '),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: AppTheme.navy, fontSize: 14, fontWeight: FontWeight.w800),
+              ),
+            ],
+            if (_running) ...[
+              const SizedBox(height: AppSpacing.lg - 4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: const LinearProgressIndicator(minHeight: 8),
+              ),
+              const SizedBox(height: AppSpacing.sm + 2),
+              Text(
+                'Large reports can take a minute. You can keep this screen open.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
-  _StageState get _stageThreeState {
-    if (_step == _Step.failed) return _isTimeout ? _StageState.timeout : _StageState.error;
-    return _stateFor(_Step.completed);
+  Widget _buildFailure(BuildContext context) {
+    final invalid = _progress?.failedCount ?? 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          _errorMessage!,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: _isTimeout ? AppTheme.warning : AppTheme.danger,
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        if (_isTimeout) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'This does not necessarily mean it failed — the server may still '
+            'be working on it. Try again to check.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        if (invalid > 0) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Text('$invalid row(s) had validation issues.',
+              textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
+        ],
+        const SizedBox(height: AppSpacing.lg),
+        OutlinedButton(
+          onPressed: () => _run(manual: _backendFailed),
+          child: const Text('Try Again'),
+        ),
+      ],
+    );
   }
 
   /// Total users / bonus-eligible users / total bonus / WhatsApp sent /
-  /// WhatsApp pending-or-failed — every figure here comes straight out of
-  /// the real `calculate-bonus` response (`_bonusSummary`). Right after
-  /// calculation, no WhatsApp send has happened yet for this report, so
-  /// "sent" is naturally 0 and "pending/failed" is the full eligible
-  /// count — that's the real state, not a placeholder.
-  Widget _buildCompletionSummary(BuildContext context) {
-    final summary = _bonusSummary;
-    final results = summary?.results ?? const [];
-    final totalUsers = summary?.totalInputRecords ?? results.length;
-    // "Bonus-eligible" = has a calculated bonus amount at all (matches the
-    // definition used everywhere else in the app — ReportRepository,
-    // Dashboard, Reports tab — so the same report shows the same number
-    // wherever it's shown).
+  /// WhatsApp pending-or-failed — every figure comes from the real results.
+  /// Right after calculation no WhatsApp send has happened yet, so "sent" is
+  /// naturally 0 and "pending/failed" is the full eligible count.
+  Widget _buildCompletion(BuildContext context) {
+    final results = _results;
+    final viewResults = ElevatedButton.icon(
+      onPressed: () => Navigator.of(context).pushReplacementNamed(
+        AppRoutes.results,
+        arguments: widget.reportId,
+      ),
+      icon: const Icon(Icons.list_alt_outlined),
+      label: const Text('View Results'),
+    );
+
+    if (_loadingResults) {
+      return const Padding(
+        padding: EdgeInsets.all(AppSpacing.md),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (results == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Your report is processed. The results summary could not be loaded '
+            'just now — open the results to try again.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          viewResults,
+        ],
+      );
+    }
+
+    // "Bonus-eligible" = has a calculated bonus amount at all (the same
+    // definition used by ReportRepository, Dashboard and the Reports tab).
     final eligible = results.where((r) => r.bonusAmount != null).toList();
-    final bonusEligible = eligible.length;
     final totalBonus = results.fold<double>(0, (sum, r) => sum + (r.bonusAmount ?? 0));
-    // Scoped to eligible users only, same as the Dashboard's WhatsApp
-    // Sent/Pending tiles — a user with no bonus owed will never get a
-    // message, so counting them as "pending" would overstate it.
     final whatsAppSent = eligible.where((r) => r.whatsappStatus == 'sent').length;
-    final whatsAppPendingOrFailed = bonusEligible - whatsAppSent;
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.check_circle, color: AppTheme.success, size: 40),
-        const SizedBox(height: AppSpacing.sm),
-        Text(
-          'Processing complete',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: AppSpacing.lg),
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg - 4, vertical: AppSpacing.sm),
             child: Column(
               children: [
-                _SummaryRow(label: 'Total users', value: '$totalUsers'),
-                _SummaryRow(label: 'Bonus-eligible users', value: '$bonusEligible'),
+                _SummaryRow(label: 'Total users', value: '${results.length}'),
+                _SummaryRow(label: 'Bonus-eligible users', value: '${eligible.length}'),
                 _SummaryRow(label: 'Total bonus', value: Formatters.amount(totalBonus)),
                 _SummaryRow(label: 'WhatsApp sent', value: '$whatsAppSent'),
                 _SummaryRow(
                   label: 'WhatsApp pending/failed',
-                  value: '$whatsAppPendingOrFailed',
+                  value: '${eligible.length - whatsAppSent}',
                   isLast: true,
                 ),
               ],
@@ -265,39 +510,9 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
           ),
         ),
         const SizedBox(height: AppSpacing.lg),
-        ElevatedButton.icon(
-          onPressed: () => Navigator.of(context).pushReplacementNamed(
-            AppRoutes.results,
-            arguments: widget.reportId,
-          ),
-          icon: const Icon(Icons.list_alt_outlined),
-          label: const Text('View Results'),
-        ),
+        viewResults,
       ],
     );
-  }
-
-  /// State for the Validating/Calculating rows specifically. A plain
-  /// index comparison isn't enough once there's a failure: `_Step.failed`
-  /// sorts after both, so without checking [_failedAtStep] a validate
-  /// failure would make the *never-run* Calculating row show a green
-  /// "done" checkmark too. [_failedAtStep] records exactly which step's
-  /// own call actually failed, so a step before it reads "done" (it
-  /// really did succeed), that step reads error/timeout, and any step
-  /// after it correctly reads "pending" (it never ran).
-  _StageState _stateFor(_Step step) {
-    if (_step == _Step.failed) {
-      final failedAt = _failedAtStep;
-      if (failedAt == null) return _StageState.pending;
-      if (step.index < failedAt.index) return _StageState.done;
-      if (step == failedAt) return _isTimeout ? _StageState.timeout : _StageState.error;
-      return _StageState.pending;
-    }
-    if (_step.index > step.index || _step == _Step.completed) {
-      return _StageState.done;
-    }
-    if (_step == step) return _StageState.active;
-    return _StageState.pending;
   }
 }
 
@@ -306,8 +521,9 @@ enum _StageState { pending, active, done, error, timeout }
 class _StageRow extends StatelessWidget {
   final String label;
   final _StageState state;
+  final bool isLast;
 
-  const _StageRow({required this.label, required this.state});
+  const _StageRow({required this.label, required this.state, required this.isLast});
 
   @override
   Widget build(BuildContext context) {
@@ -315,15 +531,15 @@ class _StageRow extends StatelessWidget {
     Color color;
     switch (state) {
       case _StageState.pending:
-        color = Colors.black26;
+        color = AppTheme.textMuted.withOpacity(0.55);
         icon = Icon(Icons.circle_outlined, color: color);
         break;
       case _StageState.active:
         color = AppTheme.primary;
         icon = const SizedBox(
-          height: 20,
-          width: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
+          height: 22,
+          width: 22,
+          child: CircularProgressIndicator(strokeWidth: 2.6),
         );
         break;
       case _StageState.done:
@@ -340,21 +556,33 @@ class _StageRow extends StatelessWidget {
         break;
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-      child: Row(
-        children: [
-          SizedBox(height: 24, width: 24, child: Center(child: icon)),
-          const SizedBox(width: AppSpacing.md),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: state == _StageState.pending ? Colors.black45 : Colors.black87,
-                  fontWeight: state == _StageState.active ? FontWeight.w600 : FontWeight.normal,
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.md - 2),
+          child: Row(
+            children: [
+              SizedBox(height: 26, width: 26, child: Center(child: icon)),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 16.5,
+                    fontWeight: state == _StageState.pending ? FontWeight.w700 : FontWeight.w800,
+                    color: state == _StageState.pending ? AppTheme.textMuted : AppTheme.navy,
+                  ),
                 ),
+              ),
+              if (state == _StageState.active)
+                const Text('In progress',
+                    style: TextStyle(
+                        color: AppTheme.primary, fontSize: 13, fontWeight: FontWeight.w800)),
+            ],
           ),
-        ],
-      ),
+        ),
+        if (!isLast) const Divider(height: 1),
+      ],
     );
   }
 }
@@ -371,12 +599,14 @@ class _SummaryRow extends StatelessWidget {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.md - 2),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.black54)),
-              Text(value, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+              Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 15)),
+              Text(value,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontSize: 17, fontWeight: FontWeight.w900, color: AppTheme.navy)),
             ],
           ),
         ),

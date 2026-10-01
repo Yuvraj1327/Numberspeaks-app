@@ -74,7 +74,12 @@ class AuthRepository extends ChangeNotifier {
   }
 
   Future<void> logout() async {
-    await _authService.signOut();
+    try {
+      await _authService.signOut();
+    } catch (_) {
+      // Server-side sign-out can fail (offline, expired token). The user
+      // still asked to log out, so clear the local session regardless.
+    }
     _session = null;
     _apiClient.setAuthToken(null);
     notifyListeners();

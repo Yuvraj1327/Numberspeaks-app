@@ -53,6 +53,13 @@ class AuthService {
   }
 
   Future<void> signOut() async {
-    await _client.auth.signOut();
+    try {
+      await _client.auth.signOut();
+    } catch (_) {
+      // The server call failed (offline / expired token) and Supabase keeps
+      // the persisted session in that case — drop it locally so the user
+      // isn't silently logged back in on next launch.
+      await _client.auth.signOut(scope: supa.SignOutScope.local);
+    }
   }
 }

@@ -5,6 +5,8 @@
 enum ReportStatus {
   uploaded,
   processing,
+  validating,
+  calculating,
   validated,
   completed,
   failed,
@@ -16,6 +18,10 @@ enum ReportStatus {
         return ReportStatus.uploaded;
       case 'processing':
         return ReportStatus.processing;
+      case 'validating':
+        return ReportStatus.validating;
+      case 'calculating':
+        return ReportStatus.calculating;
       case 'validated':
         return ReportStatus.validated;
       case 'completed':
@@ -33,6 +39,10 @@ enum ReportStatus {
         return 'Uploaded';
       case ReportStatus.processing:
         return 'Processing';
+      case ReportStatus.validating:
+        return 'Validating';
+      case ReportStatus.calculating:
+        return 'Calculating';
       case ReportStatus.validated:
         return 'Validated';
       case ReportStatus.completed:

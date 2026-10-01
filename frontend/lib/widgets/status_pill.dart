@@ -22,6 +22,8 @@ class StatusPill extends StatelessWidget {
         color = AppTheme.danger;
         break;
       case ReportStatus.processing:
+      case ReportStatus.validating:
+      case ReportStatus.calculating:
       case ReportStatus.uploaded:
         color = AppTheme.warning;
         break;

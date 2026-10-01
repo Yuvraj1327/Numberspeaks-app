@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/bonus_calculation_summary.dart';
 import '../models/bonus_result.dart';
+import '../models/report_progress.dart';
 import '../models/upload_report_response.dart';
 import '../models/validation_summary.dart';
 import '../models/whatsapp_send_summary.dart';
@@ -67,6 +68,46 @@ class ReportRepository extends ChangeNotifier {
     );
     notifyListeners();
     return response;
+  }
+
+  /// Live backend status of a report being processed in the background.
+  Future<ReportProgress> getReportStatus(String reportId) async {
+    final progress = await _reportsApi.getReportStatus(reportId);
+    // Keep the on-device history in step with what the backend really says,
+    // so the Reports/Dashboard cards show the current status.
+    await _localStore.upsertReport(
+      reportId: reportId,
+      status: progress.status,
+      userCount: progress.totalRecords > 0 ? progress.totalRecords : null,
+    );
+    return progress;
+  }
+
+  /// Called once the backend has finished a background run: records the
+  /// final figures (from the real results) exactly as [calculateBonus]
+  /// does for the manual flow, so history and activity stay consistent.
+  Future<void> recordBackgroundRunFinished(
+    String reportId, {
+    required String status,
+    required List<BonusResult> results,
+  }) async {
+    final bonusEligible = results.where((r) => r.bonusAmount != null).length;
+    final totalBonus = results.fold<double>(0, (sum, r) => sum + (r.bonusAmount ?? 0));
+    await _localStore.upsertReport(
+      reportId: reportId,
+      status: status,
+      userCount: results.length,
+      bonusEligibleCount: bonusEligible,
+      totalBonus: totalBonus,
+    );
+    await _activityLog.log(
+      type: ActivityType.bonusCalculated,
+      reportId: reportId,
+      detail: status == 'completed'
+          ? '$bonusEligible bonus(es) calculated'
+          : 'Bonus calculation did not complete successfully',
+    );
+    notifyListeners();
   }
 
   Future<ValidationSummary> validateReport(String reportId) async {

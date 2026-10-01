@@ -1,4 +1,5 @@
 import '../core/api_client.dart';
+import '../models/report_progress.dart';
 import '../models/upload_report_response.dart';
 import '../models/validation_summary.dart';
 
@@ -23,6 +24,13 @@ class ReportsApiService {
       onProgress: onProgress,
     );
     return UploadReportResponse.fromJson(json);
+  }
+
+  /// GET /api/v1/reports/{report_id}/status — the background-processing
+  /// progress of an uploaded report.
+  Future<ReportProgress> getReportStatus(String reportId) async {
+    final json = await _client.get('/reports/$reportId/status');
+    return ReportProgress.fromJson(json);
   }
 
   /// POST /api/v1/reports/{report_id}/validate

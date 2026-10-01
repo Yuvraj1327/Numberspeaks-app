@@ -80,6 +80,12 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
         _state = _UploadState.success;
         _uploadResponse = response;
       });
+      // Don't make the user tap again — go straight to the processing
+      // screen, which shows the report's real progress.
+      Navigator.of(context).pushReplacementNamed(
+        AppRoutes.processing,
+        arguments: response.reportId,
+      );
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -87,6 +93,70 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
         _errorMessage = e.userMessage;
       });
     }
+  }
+
+  /// While the request is in flight: a real byte-progress bar until the
+  /// file has been fully sent, then — because the server is still reading
+  /// the PDF and hasn't answered yet — an honest "processing" state instead
+  /// of a bar stuck at 100%.
+  Widget _buildUploadProgress(BuildContext context) {
+    final sent = _progress >= 1;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg - 4),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                if (sent)
+                  const SizedBox(
+                    height: 22,
+                    width: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2.6),
+                  )
+                else
+                  const Icon(Icons.cloud_upload_outlined, color: AppTheme.primary),
+                const SizedBox(width: AppSpacing.md - 2),
+                Expanded(
+                  child: Text(
+                    sent ? 'Upload complete — processing' : 'Uploading…',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w900, color: AppTheme.navy),
+                  ),
+                ),
+                if (!sent)
+                  Text(
+                    '${(_progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                        color: AppTheme.primary, fontSize: 16, fontWeight: FontWeight.w900),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                minHeight: 8,
+                // Determinate while bytes are being sent; indeterminate once
+                // everything is sent and the server is working.
+                value: sent || _progress <= 0 ? null : _progress,
+              ),
+            ),
+            if (sent) ...[
+              const SizedBox(height: AppSpacing.sm + 2),
+              Text(
+                'The server is reading your PDF. This can take a minute for '
+                'large reports — please keep this screen open.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   String _formatFileSize(int bytes) {
@@ -147,15 +217,7 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
-            if (_state == _UploadState.uploading) ...[
-              LinearProgressIndicator(value: _progress > 0 ? _progress : null),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Uploading… ${(_progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
+            if (_state == _UploadState.uploading) _buildUploadProgress(context),
             if (_errorMessage != null && _state != _UploadState.uploading)
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.md),

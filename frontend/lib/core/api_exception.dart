@@ -25,6 +25,12 @@ enum ApiErrorKind {
   /// No connection, DNS failure, connection refused, etc.
   network,
 
+  /// The device is online and the server was reached, but the connection
+  /// was closed/reset before a response arrived (server restarting, proxy
+  /// dropped it, response cut off). Distinct from [network] so a server-side
+  /// drop is never reported to the user as "check your internet".
+  interrupted,
+
   /// The request took too long.
   timeout,
 
@@ -37,10 +43,15 @@ class ApiException implements Exception {
   final String message;
   final int? statusCode;
 
+  /// The underlying low-level error text (e.g. "Connection reset by peer"),
+  /// kept for logs/debugging only — never shown to the user.
+  final String? cause;
+
   const ApiException({
     required this.kind,
     required this.message,
     this.statusCode,
+    this.cause,
   });
 
   /// A short, non-technical message safe to show directly in the UI.
@@ -68,6 +79,8 @@ class ApiException implements Exception {
         return 'Something went wrong on the server. Please try again shortly.';
       case ApiErrorKind.network:
         return 'Could not reach the server. Check your internet connection.';
+      case ApiErrorKind.interrupted:
+        return 'The connection to the server was interrupted. Please try again.';
       case ApiErrorKind.timeout:
         return 'The request took too long and timed out. Please try again.';
       case ApiErrorKind.unknown:
@@ -76,5 +89,5 @@ class ApiException implements Exception {
   }
 
   @override
-  String toString() => 'ApiException($kind, $statusCode): $message';
+  String toString() => 'ApiException($kind, $statusCode): $message${cause != null ? ' [$cause]' : ''}';
 }

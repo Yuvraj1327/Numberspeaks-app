@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http_parser/http_parser.dart';
 
 import 'api_exception.dart';
@@ -35,9 +36,30 @@ class ApiClient {
     }
   }
 
+  /// GETs are idempotent, so a request that dies at the connection level
+  /// (reset/closed before a response, or a proxy 502/503/504 while the
+  /// server restarts) is retried a couple of times before giving up. POSTs
+  /// are never retried — they could repeat a side effect.
+  Future<Response<dynamic>> _getWithRetry(String path) async {
+    const maxAttempts = 3;
+    for (var attempt = 1;; attempt++) {
+      try {
+        return await _dio.get<dynamic>(path);
+      } on DioException catch (e) {
+        final retryable = e.type == DioExceptionType.connectionError ||
+            e.type == DioExceptionType.unknown ||
+            const [502, 503, 504].contains(e.response?.statusCode);
+        debugPrint('[ApiClient] GET $path failed (attempt $attempt/$maxAttempts): '
+            '${e.type} ${e.response?.statusCode ?? ''} ${e.error ?? e.message}');
+        if (!retryable || attempt >= maxAttempts) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+      }
+    }
+  }
+
   Future<Map<String, dynamic>> get(String path) async {
     try {
-      final response = await _dio.get<dynamic>(path);
+      final response = await _getWithRetry(path);
       return _asMap(response.data);
     } on DioException catch (e) {
       throw _mapError(e);
@@ -46,7 +68,7 @@ class ApiClient {
 
   Future<List<dynamic>> getList(String path) async {
     try {
-      final response = await _dio.get<dynamic>(path);
+      final response = await _getWithRetry(path);
       final data = response.data;
       if (data is List) return data;
       throw ApiException(
@@ -122,10 +144,7 @@ class ApiClient {
           message: 'The request timed out.',
         );
       case DioExceptionType.connectionError:
-        return const ApiException(
-          kind: ApiErrorKind.network,
-          message: 'Could not connect to the server.',
-        );
+        return _classifyLowLevel(e, 'Could not connect to the server.');
       case DioExceptionType.badCertificate:
         return const ApiException(
           kind: ApiErrorKind.network,
@@ -139,11 +158,41 @@ class ApiClient {
       case DioExceptionType.badResponse:
         return _mapStatusError(e);
       case DioExceptionType.unknown:
-        return ApiException(
-          kind: ApiErrorKind.network,
-          message: e.message ?? 'Could not reach the server.',
-        );
+        return _classifyLowLevel(e, e.message ?? 'Could not reach the server.');
     }
+  }
+
+  /// Dio reports every low-level failure (offline, DNS, reset, closed
+  /// early, bad payload) as `connectionError`/`unknown`. Only a genuine
+  /// "no route to the server" should tell the user to check their internet;
+  /// a connection that was reached and then dropped is a different problem.
+  /// (Text-matched rather than `is SocketException` so this file stays free
+  /// of dart:io and keeps compiling for Flutter Web.)
+  ApiException _classifyLowLevel(DioException e, String fallbackMessage) {
+    final cause = '${e.error ?? e.message ?? e.type}';
+    final text = cause.toLowerCase();
+    final offline = text.contains('failed host lookup') ||
+        text.contains('network is unreachable') ||
+        text.contains('no address associated') ||
+        text.contains('no route to host');
+    final dropped = text.contains('reset') ||
+        text.contains('closed') ||
+        text.contains('broken pipe') ||
+        text.contains('eof') ||
+        text.contains('connection terminated');
+    if (!offline && dropped) {
+      return ApiException(
+        kind: ApiErrorKind.interrupted,
+        message: 'The connection to the server was interrupted.',
+        cause: cause,
+      );
+    }
+    if (!offline && e.type == DioExceptionType.unknown && e.error is! Exception) {
+      // Not a transport error at all (e.g. an unexpected response body):
+      // don't blame the user's internet.
+      return ApiException(kind: ApiErrorKind.unknown, message: fallbackMessage, cause: cause);
+    }
+    return ApiException(kind: ApiErrorKind.network, message: fallbackMessage, cause: cause);
   }
 
   ApiException _mapStatusError(DioException e) {

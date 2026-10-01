@@ -37,6 +37,8 @@ ReportNextAction resolveNextAction(String? status) {
       );
     case 'uploaded':
     case 'processing':
+    case 'validating':
+    case 'calculating':
     case 'validated':
       return const ReportNextAction(
         kind: ReportNextActionKind.continueProcessing,
