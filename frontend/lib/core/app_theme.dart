@@ -47,31 +47,31 @@ class AppTheme {
       scaffoldBackgroundColor: background,
     );
 
-    // Bolder, higher-contrast type scale — headings and card values read
-    // clearly at a glance, per the "highly readable" brief. Every screen
-    // already pulls its text styles from Theme.of(context).textTheme, so
-    // this alone re-weights the whole app without per-screen edits.
+    // Refined type scale: bold (w700) for headings, medium/semi-bold
+    // (w500-w600) for values and labels, regular (w400) for descriptions.
+    // Every screen pulls its text styles from Theme.of(context).textTheme,
+    // so this re-weights the whole app without per-screen edits.
     final textTheme = base.textTheme
         .apply(bodyColor: textStrong, displayColor: textStrong)
         .copyWith(
           headlineMedium: base.textTheme.headlineMedium?.copyWith(
-              fontSize: 30, fontWeight: FontWeight.w800, color: textStrong, letterSpacing: -0.5),
+              fontSize: 26, fontWeight: FontWeight.w700, color: textStrong, letterSpacing: -0.4),
           headlineSmall: base.textTheme.headlineSmall?.copyWith(
-              fontSize: 26, fontWeight: FontWeight.w800, color: textStrong, letterSpacing: -0.4),
+              fontSize: 22, fontWeight: FontWeight.w700, color: textStrong, letterSpacing: -0.3),
           titleLarge: base.textTheme.titleLarge?.copyWith(
-              fontSize: 22, fontWeight: FontWeight.w800, color: textStrong),
+              fontSize: 19, fontWeight: FontWeight.w700, color: textStrong),
           titleMedium: base.textTheme.titleMedium?.copyWith(
-              fontSize: 17, fontWeight: FontWeight.w700, color: textStrong),
+              fontSize: 15.5, fontWeight: FontWeight.w600, color: textStrong),
           titleSmall: base.textTheme.titleSmall?.copyWith(
-              fontSize: 15, fontWeight: FontWeight.w700, color: textStrong),
+              fontSize: 14, fontWeight: FontWeight.w600, color: textStrong),
           bodyLarge: base.textTheme.bodyLarge?.copyWith(
-              fontSize: 16, fontWeight: FontWeight.w600, color: textStrong),
+              fontSize: 15, fontWeight: FontWeight.w400, color: textStrong),
           bodyMedium: base.textTheme.bodyMedium?.copyWith(
-              fontSize: 15, fontWeight: FontWeight.w600, color: textStrong),
+              fontSize: 14, fontWeight: FontWeight.w400, color: textStrong),
           bodySmall: base.textTheme.bodySmall?.copyWith(
-              fontSize: 13, fontWeight: FontWeight.w500, color: textMuted),
+              fontSize: 12.5, fontWeight: FontWeight.w400, color: textMuted),
           labelSmall: base.textTheme.labelSmall?.copyWith(
-              fontSize: 12, fontWeight: FontWeight.w600, color: textMuted),
+              fontSize: 11.5, fontWeight: FontWeight.w500, color: textMuted),
         );
 
     return base.copyWith(
@@ -85,8 +85,8 @@ class AppTheme {
         centerTitle: false,
         titleTextStyle: TextStyle(
           color: navy,
-          fontSize: 22,
-          fontWeight: FontWeight.w800,
+          fontSize: 19,
+          fontWeight: FontWeight.w700,
         ),
         iconTheme: IconThemeData(color: navy),
       ),
@@ -99,19 +99,18 @@ class AppTheme {
         indicatorShape: const StadiumBorder(),
         height: 72,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        // Bold labels at both states so every tab stays clearly legible;
-        // the selected one is heavier and picks up the brand blue.
+        // Medium labels at rest, semi-bold when selected.
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
           return TextStyle(
-            fontSize: 12.5,
-            fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
             color: selected ? navy : textMuted,
           );
         }),
         iconTheme: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
-          return IconThemeData(color: selected ? navy : textMuted, size: 26);
+          return IconThemeData(color: selected ? navy : textMuted, size: 24);
         }),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
@@ -120,7 +119,7 @@ class AppTheme {
           foregroundColor: Colors.white,
           minimumSize: const Size.fromHeight(54),
           elevation: 0,
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -132,7 +131,7 @@ class AppTheme {
           side: const BorderSide(color: hairline, width: 1.4),
           foregroundColor: blue,
           backgroundColor: Colors.white,
-          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -141,13 +140,13 @@ class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: blue,
-          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+          textStyle: const TextStyle(fontWeight: FontWeight.w600),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: Colors.white,
-        hintStyle: const TextStyle(color: textMuted, fontWeight: FontWeight.w600),
+        hintStyle: const TextStyle(color: textMuted, fontWeight: FontWeight.w400),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: const BorderSide(color: hairline),
@@ -187,7 +186,7 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         titleTextStyle: const TextStyle(
-            color: textStrong, fontSize: 20, fontWeight: FontWeight.w800),
+            color: textStrong, fontSize: 18, fontWeight: FontWeight.w700),
       ),
       dividerTheme: const DividerThemeData(space: 1, thickness: 1, color: hairline),
       listTileTheme: ListTileThemeData(

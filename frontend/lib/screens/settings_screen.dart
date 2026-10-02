@@ -162,14 +162,14 @@ class _SettingsTile extends StatelessWidget {
             title,
             style: TextStyle(
               color: titleColor ?? AppTheme.navy,
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
+              fontSize: 15.5,
+              fontWeight: FontWeight.w600,
             ),
           ),
           subtitle: subtitle != null
               ? Text(subtitle!,
                   style: const TextStyle(
-                      color: AppTheme.textMuted, fontSize: 13.5, fontWeight: FontWeight.w600))
+                      color: AppTheme.textMuted, fontSize: 13, fontWeight: FontWeight.w400))
               : null,
           trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted, size: 26),
           onTap: onTap,

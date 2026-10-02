@@ -29,8 +29,8 @@ class ScreenHeader extends StatelessWidget {
               Text(
                 eyebrow,
                 style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
                   color: AppTheme.textMuted,
                 ),
               ),
@@ -40,8 +40,8 @@ class ScreenHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w900,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w700,
                       color: AppTheme.navy,
                     ),
               ),
@@ -66,8 +66,8 @@ class SectionTitle extends StatelessWidget {
     return Text(
       text,
       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-            fontSize: 22,
-            fontWeight: FontWeight.w900,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
             color: AppTheme.navy,
           ),
     );

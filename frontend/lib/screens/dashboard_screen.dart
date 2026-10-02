@@ -242,7 +242,7 @@ class _DashboardTabState extends State<DashboardTab> {
                   children: [
                     Text('LATEST REPORT',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            fontWeight: FontWeight.w800, letterSpacing: 0.8)),
+                            fontWeight: FontWeight.w600, letterSpacing: 0.8)),
                     const SizedBox(height: AppSpacing.sm + 2),
                     Row(
                       children: [
@@ -254,7 +254,7 @@ class _DashboardTabState extends State<DashboardTab> {
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium
-                                ?.copyWith(fontSize: 18, fontWeight: FontWeight.w800),
+                                ?.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -349,7 +349,7 @@ class _QuickUploadCard extends StatelessWidget {
                     Text(
                       'Upload Report',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontSize: 19, fontWeight: FontWeight.w900, color: AppTheme.navy),
+                          fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.navy),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -400,8 +400,8 @@ class _SummaryTile extends StatelessWidget {
               child: Text(
                 value,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w900,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
                       color: AppTheme.navy,
                     ),
               ),
@@ -410,7 +410,7 @@ class _SummaryTile extends StatelessWidget {
             Text(
               label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontSize: 14, fontWeight: FontWeight.w600),
+                  fontSize: 13.5, fontWeight: FontWeight.w400),
               overflow: TextOverflow.ellipsis,
             ),
           ],
@@ -465,7 +465,7 @@ class _ActivityLogRow extends StatelessWidget {
                             style: Theme.of(context)
                                 .textTheme
                                 .bodyMedium
-                                ?.copyWith(fontWeight: FontWeight.w800),
+                                ?.copyWith(fontWeight: FontWeight.w500),
                           ),
                         ),
                         Text(

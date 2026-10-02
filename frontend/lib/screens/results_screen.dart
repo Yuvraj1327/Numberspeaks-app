@@ -469,9 +469,9 @@ class _ResultsBodyState extends State<_ResultsBody> {
                 side: BorderSide(color: selected ? AppTheme.navy : AppTheme.hairline),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 labelStyle: TextStyle(
-                  fontSize: 14.5,
+                  fontSize: 13.5,
                   color: selected ? Colors.white : AppTheme.navy,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w600,
                 ),
               );
             },
@@ -591,7 +591,7 @@ class _ResultCard extends StatelessWidget {
                     child: Text(
                       result.userName.isNotEmpty ? result.userName[0].toUpperCase() : '?',
                       style: const TextStyle(
-                          color: AppTheme.blue, fontSize: 18, fontWeight: FontWeight.w900),
+                          color: AppTheme.blue, fontSize: 16, fontWeight: FontWeight.w700),
                     ),
                   ),
                   const SizedBox(width: AppSpacing.md - 2),
@@ -601,7 +601,7 @@ class _ResultCard extends StatelessWidget {
                       style: Theme.of(context)
                           .textTheme
                           .titleMedium
-                          ?.copyWith(fontSize: 18, fontWeight: FontWeight.w800),
+                          ?.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -622,8 +622,8 @@ class _ResultCard extends StatelessWidget {
                       Text(
                         Formatters.points(result.profitLoss),
                         style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
                           color: result.profitLoss < 0 ? AppTheme.danger : AppTheme.navy,
                         ),
                       ),
@@ -637,8 +637,8 @@ class _ResultCard extends StatelessWidget {
                       Text(
                         result.bonusAmount != null ? Formatters.amount(result.bonusAmount!) : '—',
                         style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
                           color: result.bonusAmount != null ? AppTheme.teal : AppTheme.textMuted,
                         ),
                       ),
@@ -729,7 +729,7 @@ class _ResultsTable extends StatelessWidget {
                           child: Text(
                             result.userName,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800),
+                            style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w500),
                           ),
                         ),
                         Expanded(
@@ -737,8 +737,8 @@ class _ResultsTable extends StatelessWidget {
                           child: Text(
                             Formatters.points(result.profitLoss),
                             style: TextStyle(
-                              fontSize: 15.5,
-                              fontWeight: FontWeight.w800,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w500,
                               color: result.profitLoss < 0 ? AppTheme.danger : AppTheme.navy,
                             ),
                           ),
@@ -748,8 +748,8 @@ class _ResultsTable extends StatelessWidget {
                           child: Text(
                             result.bonusAmount != null ? Formatters.amount(result.bonusAmount!) : '—',
                             style: TextStyle(
-                              fontSize: 15.5,
-                              fontWeight: FontWeight.w900,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w600,
                               color: result.bonusAmount != null ? AppTheme.teal : AppTheme.textMuted,
                             ),
                           ),
@@ -791,8 +791,8 @@ class _ResultsTable extends StatelessWidget {
       child: Text(
         label.toUpperCase(),
         style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w800,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w600,
           letterSpacing: 0.5,
           color: AppTheme.textMuted,
         ),

@@ -375,7 +375,7 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
               style: Theme.of(context)
                   .textTheme
                   .titleLarge
-                  ?.copyWith(fontSize: 22, fontWeight: FontWeight.w900, color: AppTheme.navy),
+                  ?.copyWith(fontSize: 20, fontWeight: FontWeight.w700, color: AppTheme.navy),
             ),
             const SizedBox(height: AppSpacing.xs + 2),
             Text(detail, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
@@ -385,7 +385,7 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
                 facts.join('  •  '),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                    color: AppTheme.navy, fontSize: 14, fontWeight: FontWeight.w800),
+                    color: AppTheme.navy, fontSize: 13.5, fontWeight: FontWeight.w500),
               ),
             ],
             if (_running) ...[
@@ -417,8 +417,8 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
           textAlign: TextAlign.center,
           style: TextStyle(
             color: _isTimeout ? AppTheme.warning : AppTheme.danger,
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
           ),
         ),
         if (_isTimeout) ...[
@@ -568,8 +568,8 @@ class _StageRow extends StatelessWidget {
                 child: Text(
                   label,
                   style: TextStyle(
-                    fontSize: 16.5,
-                    fontWeight: state == _StageState.pending ? FontWeight.w700 : FontWeight.w800,
+                    fontSize: 15,
+                    fontWeight: state == _StageState.pending ? FontWeight.w700 : FontWeight.w600,
                     color: state == _StageState.pending ? AppTheme.textMuted : AppTheme.navy,
                   ),
                 ),
@@ -577,7 +577,7 @@ class _StageRow extends StatelessWidget {
               if (state == _StageState.active)
                 const Text('In progress',
                     style: TextStyle(
-                        color: AppTheme.primary, fontSize: 13, fontWeight: FontWeight.w800)),
+                        color: AppTheme.primary, fontSize: 12.5, fontWeight: FontWeight.w500)),
             ],
           ),
         ),
@@ -603,10 +603,10 @@ class _SummaryRow extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 15)),
+              Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 14)),
               Text(value,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontSize: 17, fontWeight: FontWeight.w900, color: AppTheme.navy)),
+                      fontSize: 15.5, fontWeight: FontWeight.w700, color: AppTheme.navy)),
             ],
           ),
         ),

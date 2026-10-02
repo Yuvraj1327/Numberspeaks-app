@@ -140,7 +140,7 @@ class _ReportCard extends StatelessWidget {
                       style: Theme.of(context)
                           .textTheme
                           .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w800),
+                          ?.copyWith(fontWeight: FontWeight.w600),
                     ),
                   ),
                   StatusPill.forReportStatus(ReportStatus.fromString(report.status)),
@@ -179,7 +179,7 @@ class _ReportCard extends StatelessWidget {
                   child: Text(
                     '${report.bonusEligibleCount} of ${report.userCount ?? report.bonusEligibleCount} '
                     'user(s) bonus-eligible • ${Formatters.amount(report.totalBonus!)} total bonus',
-                    style: const TextStyle(color: AppTheme.teal, fontWeight: FontWeight.w800, fontSize: 13.5),
+                    style: const TextStyle(color: AppTheme.teal, fontWeight: FontWeight.w600, fontSize: 13),
                   ),
                 ),
               ],

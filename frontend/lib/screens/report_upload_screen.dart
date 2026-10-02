@@ -123,14 +123,14 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
                     style: Theme.of(context)
                         .textTheme
                         .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w900, color: AppTheme.navy),
+                        ?.copyWith(fontWeight: FontWeight.w700, color: AppTheme.navy),
                   ),
                 ),
                 if (!sent)
                   Text(
                     '${(_progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
                     style: const TextStyle(
-                        color: AppTheme.primary, fontSize: 16, fontWeight: FontWeight.w900),
+                        color: AppTheme.primary, fontSize: 15, fontWeight: FontWeight.w700),
                   ),
               ],
             ),

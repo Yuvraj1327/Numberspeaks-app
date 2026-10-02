@@ -68,8 +68,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       'Numberspeaks',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            fontSize: 34,
-                            fontWeight: FontWeight.w900,
+                            fontSize: 30,
+                            fontWeight: FontWeight.w700,
                             color: AppTheme.navy,
                           ),
                     ),
@@ -79,7 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                             color: AppTheme.textMuted,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w400,
                           ),
                     ),
                     const SizedBox(height: AppSpacing.xl),

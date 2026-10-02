@@ -45,7 +45,7 @@ class AccountTab extends StatelessWidget {
                   child: Text(
                     initial,
                     style: const TextStyle(
-                        color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900),
+                        color: Colors.white, fontSize: 26, fontWeight: FontWeight.w700),
                   ),
                 ),
                 const SizedBox(width: AppSpacing.md),
@@ -60,7 +60,7 @@ class AccountTab extends StatelessWidget {
                         style: Theme.of(context)
                             .textTheme
                             .titleMedium
-                            ?.copyWith(fontSize: 19, fontWeight: FontWeight.w900, color: AppTheme.navy),
+                            ?.copyWith(fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.navy),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -153,7 +153,7 @@ class _InfoRow extends StatelessWidget {
                     style: Theme.of(context)
                         .textTheme
                         .bodyMedium
-                        ?.copyWith(fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.navy)),
+                        ?.copyWith(fontSize: 15, fontWeight: FontWeight.w600, color: AppTheme.navy)),
               ],
             ),
           ),

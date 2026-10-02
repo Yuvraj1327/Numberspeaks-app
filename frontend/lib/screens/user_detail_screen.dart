@@ -143,7 +143,7 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                           ? Formatters.amount(_result.bonusAmount!)
                           : 'Not calculated yet',
                       style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w700,
                             color: _result.bonusAmount != null ? AppTheme.success : Colors.black38,
                           ),
                     ),
@@ -270,7 +270,7 @@ class _DetailRow extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.black54)),
-              Text(value, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+              Text(value, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
             ],
           ),
         ),

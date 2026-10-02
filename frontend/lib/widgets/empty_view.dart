@@ -34,7 +34,7 @@ class EmptyView extends StatelessWidget {
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
-                  ?.copyWith(color: AppTheme.textMuted, fontWeight: FontWeight.w600, height: 1.4),
+                  ?.copyWith(color: AppTheme.textMuted, fontWeight: FontWeight.w400, height: 1.4),
             ),
           ],
         ),
