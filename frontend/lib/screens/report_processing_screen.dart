@@ -276,7 +276,9 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
         _results = results;
         _loadingResults = false;
       });
-    } on ApiException {
+    } catch (_) {
+      // Includes ApiException: the summary just isn't shown (the
+      // "View Results" button below still works), but the spinner must stop.
       if (!mounted) return;
       setState(() => _loadingResults = false);
     }

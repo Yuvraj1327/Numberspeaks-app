@@ -85,21 +85,51 @@ class ResultsTab extends StatefulWidget {
 class _ResultsTabState extends State<ResultsTab> {
   bool _loading = true;
   String? _reportId;
+  // Bumped on every repository change so the results list is fetched again
+  // (a report that was still processing when this tab was built now has
+  // its results).
+  int _version = 0;
+  late final ReportRepository _repo;
 
   @override
   void initState() {
     super.initState();
+    _repo = context.read<ReportRepository>()..addListener(_onRepoChanged);
     _resolveReport();
   }
 
-  Future<void> _resolveReport() async {
-    setState(() => _loading = true);
-    final reportId = await context.read<ReportRepository>().getLastReportId();
+  @override
+  void dispose() {
+    _repo.removeListener(_onRepoChanged);
+    super.dispose();
+  }
+
+  /// A report was uploaded or finished elsewhere in the app: show the
+  /// newest report's current results.
+  void _onRepoChanged() {
+    if (!mounted) return;
+    _version++;
+    _resolveReport(showSpinner: false);
+  }
+
+  Future<void> _resolveReport({bool showSpinner = true}) async {
+    if (showSpinner) setState(() => _loading = true);
+    final reportId = await _repo.getLastReportId();
     if (!mounted) return;
     setState(() {
       _reportId = reportId;
       _loading = false;
     });
+  }
+
+  /// The backend says the shown report doesn't exist for this account (the
+  /// repository has already dropped it from the list): move on to the next
+  /// one, or to the empty state. If it was not dropped, keep showing the
+  /// report's own error rather than reloading it forever.
+  Future<void> _onReportMissing() async {
+    final next = await _repo.getLastReportId();
+    if (!mounted || next == _reportId) return;
+    setState(() => _reportId = next);
   }
 
   @override
@@ -120,14 +150,23 @@ class _ResultsTabState extends State<ResultsTab> {
         ),
       );
     }
-    return _ResultsBody(reportId: _reportId!);
+    return _ResultsBody(
+      // Keyed by report so a different report always gets a fresh load.
+      key: ValueKey('$_reportId#$_version'),
+      reportId: _reportId!,
+      onReportMissing: _onReportMissing,
+    );
   }
 }
 
 class _ResultsBody extends StatefulWidget {
   final String reportId;
 
-  const _ResultsBody({required this.reportId});
+  /// Called when the backend says this report does not exist (for this
+  /// account). When null the screen just shows that as an error.
+  final VoidCallback? onReportMissing;
+
+  const _ResultsBody({super.key, required this.reportId, this.onReportMissing});
 
   @override
   State<_ResultsBody> createState() => _ResultsBodyState();
@@ -163,8 +202,19 @@ class _ResultsBodyState extends State<_ResultsBody> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
+      final missing = e.kind == ApiErrorKind.notFound;
       setState(() {
-        _errorMessage = e.userMessage;
+        _errorMessage = missing ? 'This report is no longer available.' : e.userMessage;
+        _loading = false;
+      });
+      if (missing) widget.onReportMissing?.call();
+    } catch (_) {
+      // Anything unexpected (e.g. a malformed response) must end the
+      // loading state with a visible, retryable error — never a spinner
+      // that runs forever.
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Could not load the results. Please try again.';
         _loading = false;
       });
     }
@@ -307,10 +357,22 @@ class _ResultsBodyState extends State<_ResultsBody> {
                       child: ListView.separated(
                         padding: const EdgeInsets.all(AppSpacing.md),
                         itemCount: visible.length,
+                        // Lets a card (and the number typed into it) move
+                        // with its user when the list is searched/sorted.
+                        findChildIndexCallback: (key) {
+                          if (key is! ValueKey<String>) return null;
+                          final index =
+                              visible.indexWhere((r) => r.bonusResultId == key.value);
+                          return index == -1 ? null : index;
+                        },
                         separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
                         itemBuilder: (context, index) {
                           final result = visible[index];
                           return _ResultCard(
+                            // Per-user key: each card owns a text field, so
+                            // its state must follow the user, not the list
+                            // position, when the list is searched/sorted.
+                            key: ValueKey(result.bonusResultId),
                             result: result,
                             onTap: () => _openDetail(result),
                             onNumberSaved: (number) => _saveWhatsAppNumber(result, number),
@@ -339,6 +401,7 @@ class _ResultCard extends StatelessWidget {
   final ValueChanged<String> onNumberSaved;
 
   const _ResultCard({
+    super.key,
     required this.result,
     required this.onTap,
     required this.onNumberSaved,

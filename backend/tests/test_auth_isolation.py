@@ -174,6 +174,17 @@ class IsolationTests(PipelineTestCase):
         self.assertEqual(r.status_code, 404)
         self.assertIn("No report found", r.json()["detail"])
 
+    def test_malformed_report_id_is_404_on_every_report_endpoint(self):
+        self.user = USER_A
+        for method, path in [
+            ("get", "/reports/not-a-uuid/results"),
+            ("get", f"/reports/not-a-uuid/results/{uuid.uuid4()}"),
+            ("post", "/reports/not-a-uuid/validate"),
+            ("post", "/reports/not-a-uuid/calculate-bonus"),
+            ("post", "/reports/not-a-uuid/send-whatsapp"),
+        ]:
+            self.assertEqual(self.api(method, path).status_code, 404, path)
+
 
 class TokenVerificationTests(unittest.TestCase):
     """The real get_current_user (no dependency override), with Supabase Auth faked."""

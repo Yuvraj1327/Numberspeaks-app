@@ -9,6 +9,7 @@ to Supabase directly.
 
 import logging
 import traceback
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -56,6 +57,13 @@ def _chunks(items: List[Any], size: int) -> Iterable[List[Any]]:
 
 
 def get_report(db: Client, report_id: str) -> Optional[dict]:
+    # reports.id is a uuid column: Postgres rejects any other text with an
+    # error, which callers would report as a database outage (503). An id
+    # that cannot exist is simply "no such report".
+    try:
+        uuid.UUID(report_id)
+    except ValueError:
+        return None
     res = db.table("reports").select("*").eq("id", report_id).limit(1).execute()
     return res.data[0] if res.data else None
 

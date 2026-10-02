@@ -131,6 +131,10 @@ class _WhatsAppSendFieldState extends State<WhatsAppSendField> {
             ElevatedButton.icon(
               onPressed: (_hasBonus && !_sending) ? _send : null,
               style: ElevatedButton.styleFrom(
+                // The theme's minimumSize is full-width (Size.fromHeight);
+                // inside this Row that means an infinite minimum width and a
+                // layout error on every result card.
+                minimumSize: const Size(0, 48),
                 backgroundColor: AppTheme.success,
                 disabledBackgroundColor: AppTheme.success.withOpacity(0.35),
                 foregroundColor: Colors.white,
