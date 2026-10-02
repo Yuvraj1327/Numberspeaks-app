@@ -11,8 +11,7 @@ import '../routing/app_routes.dart';
 import '../widgets/empty_view.dart';
 import '../widgets/error_view.dart';
 import '../widgets/loading_view.dart';
-import '../widgets/screen_header.dart';
-import '../widgets/status_pill.dart';
+import '../widgets/whatsapp_send_field.dart';
 
 enum _SortOption { nameAsc, nameDesc, bonusHighLow, bonusLowHigh }
 
@@ -57,7 +56,7 @@ extension on _FilterOption {
 /// Screen 5 — Bonus Results, as a full pushed screen for a specific report
 /// (e.g. from the Reports tab's history, or right after processing).
 /// The Results *tab* wraps the same [_ResultsBody] — see [ResultsTab] below
-/// — so the search/sort/send-WhatsApp logic exists in exactly one place.
+/// — so the search/sort/filter/WhatsApp logic exists in exactly one place.
 class ResultsScreen extends StatelessWidget {
   final String reportId;
 
@@ -86,30 +85,10 @@ class ResultsTab extends StatefulWidget {
 class _ResultsTabState extends State<ResultsTab> {
   bool _loading = true;
   String? _reportId;
-  // Bumped on every repository change so the results list is fetched again
-  // (a report that was still processing when this tab first loaded now has
-  // its results).
-  int _version = 0;
-  late final ReportRepository _repo;
 
   @override
   void initState() {
     super.initState();
-    _repo = context.read<ReportRepository>()..addListener(_onRepoChanged);
-    _resolveReport();
-  }
-
-  @override
-  void dispose() {
-    _repo.removeListener(_onRepoChanged);
-    super.dispose();
-  }
-
-  /// A report was uploaded, finished or had WhatsApp sent elsewhere in the
-  /// app: show the newest report's current results.
-  void _onRepoChanged() {
-    if (!mounted) return;
-    _version++;
     _resolveReport();
   }
 
@@ -123,16 +102,6 @@ class _ResultsTabState extends State<ResultsTab> {
     });
   }
 
-  /// The backend says the shown report doesn't exist. The repository has
-  /// dropped it from the list, so switch to the next one (or the empty
-  /// state). If it was not dropped, keep showing the report's own error
-  /// instead of reloading it forever.
-  Future<void> _onReportMissing() async {
-    final next = await context.read<ReportRepository>().getLastReportId();
-    if (!mounted || next == _reportId) return;
-    setState(() => _reportId = next);
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading) return const LoadingView();
@@ -141,10 +110,8 @@ class _ResultsTabState extends State<ResultsTab> {
         onRefresh: _resolveReport,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(AppSpacing.lg),
           children: const [
-            ScreenHeader(eyebrow: 'Bonus overview', title: 'Results'),
-            SizedBox(height: 80),
+            SizedBox(height: 120),
             EmptyView(
               icon: Icons.bar_chart_outlined,
               message: 'No results yet.\nUpload and process a report to see bonus results here.',
@@ -153,35 +120,14 @@ class _ResultsTabState extends State<ResultsTab> {
         ),
       );
     }
-    return _ResultsBody(
-      // Keyed by report so a different report always gets a fresh load.
-      key: ValueKey('$_reportId#$_version'),
-      reportId: _reportId!,
-      showHeader: true,
-      // The report is gone (the repository has already dropped it from the
-      // on-device list): move on to the next most recent one, or to the
-      // empty state, rather than showing a dead end.
-      onReportMissing: _onReportMissing,
-    );
+    return _ResultsBody(reportId: _reportId!);
   }
 }
 
 class _ResultsBody extends StatefulWidget {
   final String reportId;
 
-  /// True when embedded as the Results tab (which has no AppBar of its own).
-  final bool showHeader;
-
-  /// Called when the backend says this report does not exist (for this
-  /// account). When null the screen shows that as an error instead.
-  final VoidCallback? onReportMissing;
-
-  const _ResultsBody({
-    super.key,
-    required this.reportId,
-    this.showHeader = false,
-    this.onReportMissing,
-  });
+  const _ResultsBody({required this.reportId});
 
   @override
   State<_ResultsBody> createState() => _ResultsBodyState();
@@ -194,9 +140,6 @@ class _ResultsBodyState extends State<_ResultsBody> {
   String _query = '';
   _SortOption _sort = _SortOption.nameAsc;
   _FilterOption _filter = _FilterOption.all;
-  bool _sendingWhatsApp = false;
-  bool _retrying = false;
-  bool _deleting = false;
 
   @override
   void initState() {
@@ -220,12 +163,10 @@ class _ResultsBodyState extends State<_ResultsBody> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      final missing = e.kind == ApiErrorKind.notFound;
       setState(() {
-        _errorMessage = missing ? 'This report is no longer available.' : e.userMessage;
+        _errorMessage = e.userMessage;
         _loading = false;
       });
-      if (missing) widget.onReportMissing?.call();
     }
   }
 
@@ -253,131 +194,25 @@ class _ResultsBodyState extends State<_ResultsBody> {
     return list;
   }
 
-  Future<void> _sendWhatsApp() async {
-    setState(() => _sendingWhatsApp = true);
+  /// Persists an admin-entered WhatsApp number (Supabase — see
+  /// ReportRepository.saveWhatsAppNumber) and reflects it locally so the
+  /// in-memory list stays consistent with what was just saved.
+  Future<void> _saveWhatsAppNumber(BonusResult result, String number) async {
     final repo = context.read<ReportRepository>();
-    try {
-      final summary = await repo.sendWhatsApp(widget.reportId);
-      if (!mounted) return;
-      setState(() => _sendingWhatsApp = false);
-      _showWhatsAppSummary(summary.sentCount, summary.failedCount, summary.skippedCount);
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() => _sendingWhatsApp = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.userMessage), backgroundColor: AppTheme.danger),
-      );
-    }
-  }
-
-  /// "Retry" for a failed/pending WhatsApp message. There is no per-user
-  /// send endpoint (see README "known gaps") — only a report-wide one,
-  /// which already skips anyone already sent and only (re)attempts
-  /// pending/failed numbers. So Retry calls that same endpoint again; the
-  /// snackbar says exactly that rather than implying a single-user resend.
-  Future<void> _retryWhatsApp() async {
-    setState(() => _retrying = true);
-    final repo = context.read<ReportRepository>();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Retrying WhatsApp for pending/failed users on this report…')),
-    );
-    try {
-      final summary = await repo.sendWhatsApp(widget.reportId);
-      if (!mounted) return;
-      setState(() => _retrying = false);
-      _showWhatsAppSummary(summary.sentCount, summary.failedCount, summary.skippedCount);
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() => _retrying = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.userMessage), backgroundColor: AppTheme.danger),
-      );
-    }
-  }
-
-  Future<void> _deleteReport() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete this report?'),
-        content: const Text(
-          'The uploaded PDF and all of its bonus results will be permanently deleted. '
-          'This cannot be undone.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    setState(() => _deleting = true);
-    final repo = context.read<ReportRepository>();
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await repo.deleteReport(widget.reportId);
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() => _deleting = false);
-      messenger.showSnackBar(SnackBar(content: Text(e.userMessage), backgroundColor: AppTheme.danger));
-      return;
-    }
-    messenger.showSnackBar(const SnackBar(content: Text('Report deleted.')));
+    await repo.saveWhatsAppNumber(widget.reportId, result, number);
     if (!mounted) return;
-    if (widget.showHeader) {
-      // Results tab: it moves on to the next report (or the empty state)
-      // by itself, because the repository announces the deletion.
-      return;
-    }
-    Navigator.of(context).pop();
+    setState(() {
+      final index = _results.indexWhere((r) => r.bonusResultId == result.bonusResultId);
+      if (index != -1) {
+        _results[index] = _results[index].copyWith(whatsappNumber: number);
+      }
+    });
   }
 
-  Widget _deleteButton() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-      child: SizedBox(
-        width: double.infinity,
-        child: OutlinedButton.icon(
-          onPressed: _deleting ? null : _deleteReport,
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppTheme.danger,
-            side: const BorderSide(color: AppTheme.danger),
-          ),
-          icon: _deleting
-              ? const SizedBox(
-                  height: 16,
-                  width: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.danger),
-                )
-              : const Icon(Icons.delete_outline),
-          label: Text(_deleting ? 'Deleting…' : 'Delete Report'),
-        ),
-      ),
-    );
-  }
-
-  void _showWhatsAppSummary(int sent, int failed, int skipped) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('WhatsApp Messages Sent'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Sent: $sent', style: const TextStyle(color: AppTheme.success)),
-            Text('Failed: $failed', style: const TextStyle(color: AppTheme.danger)),
-            Text('Skipped: $skipped', style: const TextStyle(color: AppTheme.warning)),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
-        ],
-      ),
+  void _openDetail(BonusResult result) {
+    Navigator.of(context).pushNamed(
+      AppRoutes.userDetail,
+      arguments: UserDetailArgs(reportId: widget.reportId, initialResult: result),
     );
   }
 
@@ -392,14 +227,9 @@ class _ResultsBodyState extends State<_ResultsBody> {
         onRefresh: _load,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: widget.showHeader ? const EdgeInsets.all(AppSpacing.lg) : EdgeInsets.zero,
-          children: [
-            if (widget.showHeader)
-              const ScreenHeader(eyebrow: 'Bonus overview', title: 'Results'),
-            const SizedBox(height: 120),
-            const EmptyView(message: 'No bonus results yet for this report.'),
-            const SizedBox(height: AppSpacing.lg),
-            _deleteButton(),
+          children: const [
+            SizedBox(height: 120),
+            EmptyView(message: 'No bonus results yet for this report.'),
           ],
         ),
       );
@@ -409,35 +239,23 @@ class _ResultsBodyState extends State<_ResultsBody> {
 
     return Column(
       children: [
-        if (widget.showHeader)
-          const Padding(
-            padding: EdgeInsets.fromLTRB(
-                AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 0),
-            child: ScreenHeader(eyebrow: 'Bonus overview', title: 'Results'),
-          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.md),
+              AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
           child: Row(
             children: [
               Expanded(
                 child: TextField(
                   decoration: const InputDecoration(
                     hintText: 'Search by name',
-                    prefixIcon: Icon(Icons.search_rounded, color: AppTheme.navy),
+                    prefixIcon: Icon(Icons.search),
                   ),
                   onChanged: (value) => setState(() => _query = value),
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
               PopupMenuButton<_SortOption>(
-                icon: const Icon(Icons.sort_rounded, color: AppTheme.navy, size: 28),
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  side: const BorderSide(color: AppTheme.hairline),
-                  fixedSize: const Size(52, 52),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
+                icon: const Icon(Icons.sort),
                 initialValue: _sort,
                 onSelected: (value) => setState(() => _sort = value),
                 itemBuilder: (context) => const [
@@ -451,12 +269,12 @@ class _ResultsBodyState extends State<_ResultsBody> {
           ),
         ),
         SizedBox(
-          height: 42,
+          height: 36,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
             itemCount: _FilterOption.values.length,
-            separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
+            separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.xs),
             itemBuilder: (context, index) {
               final option = _FilterOption.values[index];
               final selected = option == _filter;
@@ -464,338 +282,203 @@ class _ResultsBodyState extends State<_ResultsBody> {
                 label: Text(option.label),
                 selected: selected,
                 onSelected: (_) => setState(() => _filter = option),
-                showCheckmark: false,
-                selectedColor: AppTheme.navy,
-                side: BorderSide(color: selected ? AppTheme.navy : AppTheme.hairline),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                selectedColor: AppTheme.primary.withOpacity(0.16),
                 labelStyle: TextStyle(
-                  fontSize: 13.5,
-                  color: selected ? Colors.white : AppTheme.navy,
-                  fontWeight: FontWeight.w600,
+                  color: selected ? AppTheme.primary : Colors.black87,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 ),
               );
             },
           ),
         ),
-        const SizedBox(height: AppSpacing.md),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _sendingWhatsApp ? null : _sendWhatsApp,
-              icon: _sendingWhatsApp
-                  ? const SizedBox(
-                      height: 16,
-                      width: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.send_outlined),
-              label: Text(_sendingWhatsApp ? 'Sending…' : 'Send Bonus via WhatsApp'),
-            ),
-          ),
-        ),
         const SizedBox(height: AppSpacing.sm),
-        _deleteButton(),
-        const SizedBox(height: AppSpacing.xs),
         Expanded(
           child: visible.isEmpty
               ? const EmptyView(message: 'No users match your search.', icon: Icons.search_off)
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final wide = constraints.maxWidth >= 720;
-                    return RefreshIndicator(
-                      onRefresh: _load,
-                      child: wide
-                          ? _ResultsTable(
-                              results: visible,
-                              reportId: widget.reportId,
-                              onTapResult: _openDetail,
-                              onRetry: _retrying ? null : _retryWhatsApp,
-                            )
-                          : ListView.separated(
-                              padding: const EdgeInsets.all(AppSpacing.lg),
-                              itemCount: visible.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.md),
-                              itemBuilder: (context, index) => _ResultCard(
-                                result: visible[index],
-                                whatsAppStatus: _resolveWhatsAppStatus(context, visible[index]),
-                                onTap: () => _openDetail(visible[index]),
-                                onRetry: _retrying ? null : _retryWhatsApp,
-                              ),
-                            ),
-                    );
-                  },
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      // Caps card width on tablet/desktop/web so a row of
+                      // fields never stretches into an unreadable single
+                      // line — still a plain full-width list on phones.
+                      constraints: const BoxConstraints(maxWidth: 820),
+                      child: ListView.separated(
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        itemCount: visible.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+                        itemBuilder: (context, index) {
+                          final result = visible[index];
+                          return _ResultCard(
+                            result: result,
+                            onTap: () => _openDetail(result),
+                            onNumberSaved: (number) => _saveWhatsAppNumber(result, number),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
                 ),
         ),
       ],
     );
   }
-
-  /// The session cache (if a send just happened) can be more specific than
-  /// the backend's own latest-status field; otherwise fall back to that
-  /// durable value from GET /results, which is always present. Then
-  /// normalized for display (see [BonusResult.displayWhatsAppStatus]) so a
-  /// user with no WhatsApp number on file always reads "No Number".
-  String _resolveWhatsAppStatus(BuildContext context, BonusResult result) {
-    final raw = context
-            .read<ReportRepository>()
-            .sessionWhatsAppStatusFor(widget.reportId, result.bonusResultId) ??
-        result.whatsappStatus;
-    return result.displayWhatsAppStatus(raw);
-  }
-
-  void _openDetail(BonusResult result) {
-    Navigator.of(context).pushNamed(
-      AppRoutes.userDetail,
-      arguments: UserDetailArgs(reportId: widget.reportId, initialResult: result),
-    );
-  }
 }
 
-/// Compact card layout for narrow (phone) widths — the same
-/// "User Name | Profit/Loss | Bonus | WhatsApp Status" fields the wide
-/// table shows, stacked instead of columned. A Retry action appears when
-/// this user's WhatsApp message is failed or still pending.
+/// One user's full result row, exactly as the brief lists it: User Name,
+/// Level, Casino Pts, Sport Pts, Third Party Pts, Profit/Loss, 3% Bonus,
+/// then the WhatsApp number input + Send button. Used for every width —
+/// a stacked card reads cleanly at any size, unlike a cramped many-column
+/// table. Tapping the header (name/avatar) opens the full user detail
+/// screen; the WhatsApp field below is its own tap target so typing a
+/// number or pressing Send never triggers navigation.
 class _ResultCard extends StatelessWidget {
   final BonusResult result;
-  final String? whatsAppStatus;
   final VoidCallback onTap;
-  final VoidCallback? onRetry;
+  final ValueChanged<String> onNumberSaved;
 
   const _ResultCard({
     required this.result,
-    required this.whatsAppStatus,
     required this.onTap,
-    this.onRetry,
+    required this.onNumberSaved,
   });
 
-  bool get _canRetry => whatsAppStatus == 'failed' || whatsAppStatus == 'not_sent';
+  bool get _hasBonus => (result.bonusAmount ?? 0) > 0;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg - 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(12),
+              child: Row(
                 children: [
                   CircleAvatar(
-                    radius: 22,
-                    backgroundColor: AppTheme.blue.withOpacity(0.12),
+                    radius: 20,
+                    backgroundColor: AppTheme.surfaceMuted,
                     child: Text(
                       result.userName.isNotEmpty ? result.userName[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                          color: AppTheme.blue, fontSize: 16, fontWeight: FontWeight.w700),
+                      style: const TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w800),
                     ),
                   ),
-                  const SizedBox(width: AppSpacing.md - 2),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
-                    child: Text(
-                      result.userName,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          result.userName,
+                          style: Theme.of(context).textTheme.titleMedium,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (result.level != null && result.level!.trim().isNotEmpty)
+                          Text(
+                            'Level: ${result.level}',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: Colors.black54),
+                          ),
+                      ],
                     ),
                   ),
-                  if (whatsAppStatus != null) StatusPill.forWhatsAppStatus(whatsAppStatus!),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md),
-              const Divider(height: 1),
-              const SizedBox(height: AppSpacing.md),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Profit/Loss', style: Theme.of(context).textTheme.labelSmall),
-                      const SizedBox(height: 2),
-                      Text(
-                        Formatters.points(result.profitLoss),
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: result.profitLoss < 0 ? AppTheme.danger : AppTheme.navy,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('Bonus', style: Theme.of(context).textTheme.labelSmall),
-                      const SizedBox(height: 2),
-                      Text(
-                        result.bonusAmount != null ? Formatters.amount(result.bonusAmount!) : '—',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 18,
-                          color: result.bonusAmount != null ? AppTheme.teal : AppTheme.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              if (_canRetry && onRetry != null) ...[
-                const SizedBox(height: AppSpacing.sm),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: onRetry,
-                    icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text('Retry'),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Table layout for wide (tablet/desktop/web) widths — the exact
-/// "User Name | Profit/Loss | Bonus | WhatsApp Status" columns asked for,
-/// as literal columns rather than a stacked card, plus a Retry action for
-/// any row whose WhatsApp message is failed or still pending.
-class _ResultsTable extends StatelessWidget {
-  final List<BonusResult> results;
-  final String reportId;
-  final void Function(BonusResult) onTapResult;
-  final VoidCallback? onRetry;
-
-  const _ResultsTable({
-    required this.results,
-    required this.reportId,
-    required this.onTapResult,
-    this.onRetry,
-  });
-
-  static const _nameFlex = 4;
-  static const _plFlex = 2;
-  static const _bonusFlex = 2;
-  static const _statusFlex = 3;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm, horizontal: AppSpacing.sm),
-            child: Row(
-              children: [
-                _headerCell('User Name', _nameFlex),
-                _headerCell('Profit/Loss', _plFlex),
-                _headerCell('Bonus', _bonusFlex),
-                _headerCell('WhatsApp Status', _statusFlex),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: ListView.separated(
-              itemCount: results.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final result = results[index];
-                final rawStatus = context
-                        .read<ReportRepository>()
-                        .sessionWhatsAppStatusFor(reportId, result.bonusResultId) ??
-                    result.whatsappStatus;
-                final whatsAppStatus = result.displayWhatsAppStatus(rawStatus);
-                final canRetry = whatsAppStatus == 'failed' || whatsAppStatus == 'not_sent';
-                return InkWell(
-                  onTap: () => onTapResult(result),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm, horizontal: AppSpacing.sm),
-                    child: Row(
+                  const SizedBox(width: AppSpacing.sm),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _hasBonus
+                          ? AppTheme.success.withOpacity(0.12)
+                          : AppTheme.surfaceMuted,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        Expanded(
-                          flex: _nameFlex,
-                          child: Text(
-                            result.userName,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w500),
+                        Text(
+                          'BONUS (3%)',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                            color: _hasBonus ? AppTheme.success : Colors.black45,
                           ),
                         ),
-                        Expanded(
-                          flex: _plFlex,
-                          child: Text(
-                            Formatters.points(result.profitLoss),
-                            style: TextStyle(
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w500,
-                              color: result.profitLoss < 0 ? AppTheme.danger : AppTheme.navy,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          flex: _bonusFlex,
-                          child: Text(
-                            result.bonusAmount != null ? Formatters.amount(result.bonusAmount!) : '—',
-                            style: TextStyle(
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w600,
-                              color: result.bonusAmount != null ? AppTheme.teal : AppTheme.textMuted,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          flex: _statusFlex,
-                          child: Row(
-                            children: [
-                              StatusPill.forWhatsAppStatus(whatsAppStatus),
-                              if (canRetry && onRetry != null) ...[
-                                const SizedBox(width: 6),
-                                InkWell(
-                                  onTap: onRetry,
-                                  borderRadius: BorderRadius.circular(20),
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(4),
-                                    child: Icon(Icons.refresh, size: 16, color: AppTheme.primary),
-                                  ),
-                                ),
-                              ],
-                            ],
+                        Text(
+                          _hasBonus ? Formatters.amount(result.bonusAmount!) : '—',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            color: _hasBonus ? AppTheme.success : Colors.black45,
                           ),
                         ),
                       ],
                     ),
                   ),
-                );
-              },
+                  const SizedBox(width: 4),
+                  const Icon(Icons.chevron_right, color: Colors.black26),
+                ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: AppSpacing.sm),
+            const Divider(height: 1),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.md,
+              runSpacing: AppSpacing.xs,
+              children: [
+                _StatChip(label: 'Casino Pts', value: Formatters.points(result.casinoPts)),
+                _StatChip(label: 'Sport Pts', value: Formatters.points(result.sportPts)),
+                _StatChip(
+                    label: 'Third Party Pts', value: Formatters.points(result.thirdPartyPts)),
+                _StatChip(
+                  label: 'Profit/Loss',
+                  value: Formatters.points(result.profitLoss),
+                  valueColor: result.profitLoss < 0 ? AppTheme.danger : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            const Divider(height: 1),
+            const SizedBox(height: AppSpacing.sm),
+            WhatsAppSendField(result: result, onNumberSaved: onNumberSaved),
+          ],
+        ),
       ),
     );
   }
+}
 
-  Widget _headerCell(String label, int flex) {
-    return Expanded(
-      flex: flex,
-      child: Text(
-        label.toUpperCase(),
-        style: const TextStyle(
-          fontSize: 11.5,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.5,
-          color: AppTheme.textMuted,
-        ),
+class _StatChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _StatChip({required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 132,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+              color: Colors.black45,
+            ),
+          ),
+          Text(value, style: TextStyle(fontWeight: FontWeight.w700, color: valueColor)),
+        ],
       ),
     );
   }

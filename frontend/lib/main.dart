@@ -16,6 +16,7 @@ import 'services/auth_service.dart';
 import 'services/bonus_api_service.dart';
 import 'services/local_report_store.dart';
 import 'services/reports_api_service.dart';
+import 'services/supabase_report_store.dart';
 import 'services/whatsapp_api_service.dart';
 
 Future<void> main() async {
@@ -71,6 +72,7 @@ class NumberspeaksApp extends StatelessWidget {
               localStore: LocalReportStore(userId: currentUserId),
               activityLog: ActivityLogStore(userId: currentUserId),
               currentUserId: currentUserId,
+              supabaseStore: SupabaseReportStore(),
             );
           },
         ),

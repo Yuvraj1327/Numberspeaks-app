@@ -58,6 +58,30 @@ class BonusResult {
     return rawStatus;
   }
 
+  /// A copy with just [whatsappNumber] overridden — used to merge in a
+  /// number the admin typed/saved (see SupabaseReportStore), or to reflect
+  /// a just-saved number locally without a round trip to the server.
+  /// Everything else is carried over unchanged.
+  BonusResult copyWith({String? whatsappNumber}) {
+    return BonusResult(
+      bonusResultId: bonusResultId,
+      reportId: reportId,
+      userId: userId,
+      userName: userName,
+      whatsappNumber: whatsappNumber ?? this.whatsappNumber,
+      level: level,
+      casinoPts: casinoPts,
+      sportPts: sportPts,
+      thirdPartyPts: thirdPartyPts,
+      profitLoss: profitLoss,
+      ptype: ptype,
+      bonusAmount: bonusAmount,
+      calculationStatus: calculationStatus,
+      whatsappStatus: whatsappStatus,
+      createdAt: createdAt,
+    );
+  }
+
   factory BonusResult.fromJson(Map<String, dynamic> json) {
     return BonusResult(
       bonusResultId: json['bonus_result_id'] as String? ?? '',

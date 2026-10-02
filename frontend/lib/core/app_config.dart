@@ -20,9 +20,12 @@ class AppConfig {
   static String get apiBaseUrl =>
       dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:8000';
 
-  /// Supabase project URL, used only for Auth (login/session), never for
-  /// direct table access — all report/bonus/WhatsApp data goes through the
-  /// FastAPI backend, never directly from Flutter to Supabase tables.
+  /// Supabase project URL. Used for Auth (login/session) as before, and —
+  /// as of the "final user result flow" round — also for direct,
+  /// owner-scoped table/storage access (see SupabaseReportStore), which
+  /// durably persists uploaded reports/results per account. All bonus
+  /// *calculation* still happens only via the FastAPI backend; Supabase is
+  /// a persistence layer on top, never a second place business logic runs.
   static String get supabaseUrl => dotenv.env['SUPABASE_URL'] ?? '';
 
   /// Supabase anon (public) key. Never the service-role key — that stays

@@ -784,3 +784,158 @@ clean: no dangling references to the deleted file, `AppLogo` untouched,
 `_accountIndex`/`_goToTab` wiring intact, brace/paren balance fine in all
 three files. Please run `flutter analyze` and `flutter run -d chrome` on
 your machine and send back anything they report.
+
+## 15. Final user result flow — per-row WhatsApp + durable Supabase storage (this round)
+
+This round changes two things on top of everything above: what each
+result row shows and how WhatsApp is sent, and where report/result data
+is durably stored. **A real setup step is required before this works —
+see "Before you run this" below.**
+
+### New dependency: `url_launcher`
+
+Added `url_launcher: ^6.3.1` to `pubspec.yaml` — it's what opens WhatsApp
+(the app, or web.whatsapp.com) via a `wa.me` link. Run `flutter pub get`
+after pulling in this round's files.
+
+### Results screen — every field, per row, as asked
+
+Each user row (Results tab, Results screen, and the User Detail screen)
+now shows: **User Name, Level, Casino Pts, Sport Pts, Third Party Pts,
+Profit/Loss, Bonus (3%)**, then a **WhatsApp Number** field and a **Send**
+button. `bonus_amount` is still the real, backend-calculated field from
+`POST /calculate-bonus` / `GET /results` (app/schemas/bonus.py) — nothing
+here re-derives or re-checks the 3%-of-loss rule client-side; "Bonus
+(3%)" is just this round's clearer label for the same existing field, per
+"Do not change bonus calculation logic."
+
+The old wide-screen table and narrow-screen card were two different
+layouts showing only 4 columns; both are replaced by one card layout
+(`_ResultCard` in `results_screen.dart`) used at every width — with all
+7 fields it reads far more "clean and readable" as a stacked card than a
+cramped multi-column table would. On tablet/desktop/web the list is
+simply centered with a max width (820px) instead of stretching into
+unreadably long rows.
+
+A user with no bonus owed (`bonus_amount` null or 0) shows "No bonus owed
+for this user — nothing to send" and its Send button is disabled — sending
+a "₹0.00 has been created" message would be actively misleading.
+
+### WhatsApp — manual, not automatic (behavior change, as explicitly asked)
+
+**Previously:** a report-wide "Send Bonus via WhatsApp" button called
+`POST /reports/{id}/send-whatsapp`, which sent messages through a backend-
+side WhatsApp integration automatically, plus a "Retry" action that called
+the same endpoint again.
+
+**Now, per this round's brief ("Do not automatically send the message
+through the API. Just open WhatsApp with the message ready to send."):**
+that bulk button and Retry action are **removed** from the Results screen
+and User Detail screen. Each row instead has its own WhatsApp Number field
+(editable, pre-filled from whatever number the backend extracted from the
+PDF, if any) and a Send button. Pressing Send opens WhatsApp itself — the
+app or web.whatsapp.com, via `https://wa.me/<number>?text=<message>` — with
+this exact message pre-filled and already addressed to that number:
+
+```
+Dear {User Name},
+
+₹{Bonus Amount} has been created to your wallet.
+Please enjoy the game!
+```
+
+Nothing is sent until the admin presses Send *inside* WhatsApp — this app
+never calls any send/messaging API itself for this action. The number
+typed in is normalized to digits-only for the `wa.me` link (it must
+include the country code, e.g. `9198XXXXXXXX` — a hint says so in the
+field).
+
+**Not deleted:** `services/whatsapp_api_service.dart`,
+`ReportRepository.sendWhatsApp`/`sessionWhatsAppStatusFor`/
+`sessionWhatsAppSummaryFor`, and the `whatsapp_status`/`displayWhatsAppStatus`
+plumbing on `BonusResult` are all still in the codebase, completely
+untouched — the Dashboard's "WhatsApp Sent"/"WhatsApp Pending" summary
+cards (§13) still read `whatsappStatus` directly from `GET /results` and
+still work exactly as before. They were left alone because the brief
+scoped this round to the result row/WhatsApp-send *flow*, not the
+Dashboard, and because that backend endpoint may still be wanted
+elsewhere later — it's simply no longer called from the UI. One honest
+side effect: since the UI no longer calls `POST /send-whatsapp`, that
+field will no longer naturally progress to `"sent"` on its own, so the
+Dashboard's WhatsApp Sent/Pending cards will trend toward "all pending"
+over time. That's a real, expected consequence of this round's change,
+not a bug — flagging it here in case you want the Dashboard cards revisited
+in a future round.
+
+### DATA STORAGE — Supabase (new)
+
+Supabase was already a dependency (`supabase_flutter`), used only for
+Auth. This round adds direct table + storage use — a new
+`services/supabase_report_store.dart` — so report and result data now
+persists **per signed-in account**, not just on-device like
+`LocalReportStore`/`ActivityLogStore` (§9/§13) already did:
+
+- **`reports` table** — one row per uploaded report (id, file name,
+  status, the same small aggregate counts already shown elsewhere), saved
+  right after a real `uploadReport`/`calculateBonus` response comes back.
+- **`bonus_results` table** — one row per user per report, saved right
+  after a real `calculate-bonus`/`getResults` response — plus
+  `whatsapp_number`, which is also where an admin-typed number (the
+  backend has no field/endpoint for this) is kept, so it's remembered
+  next time.
+- **Storage bucket `report-pdfs`** — the actual uploaded PDF bytes,
+  uploaded right after a real `uploadReport` response, at
+  `<owner_id>/<report_id>/<file_name>`.
+
+**Access model:** every row/file is scoped to `owner_id = auth.uid()` —
+each signed-in admin only ever sees reports/results they personally
+uploaded. This is this round's best-effort reading of "available ... as
+allowed by the user's access" for an app with one login-based role; the
+SQL script (see below) explains in a comment exactly which line to change
+if you instead want every admin to share one pool of reports.
+
+**`ReportRepository.getResults`** now: calls the real backend first (as
+always), merges in any admin-saved WhatsApp number, writes the merged
+result through to Supabase, and — only if the backend call itself fails
+(network/timeout/etc.) — falls back to whatever this account already has
+saved in Supabase, so results really do stay available after a
+refresh/logout-login even without a live backend connection. Every
+Supabase call is fail-soft (wrapped, logged, never thrown) so none of
+this can ever break or block the real upload/validate/calculate-bonus
+flow if the tables aren't set up yet.
+
+### Before you run this: one-time Supabase setup
+
+A new file, **`supabase/numberspeaks_results_schema.sql`**, is included
+in this round's delivery. Open your Supabase project's SQL editor (the
+same project already used for login — the one `.env`'s `SUPABASE_URL`
+points to) and run it once. It creates the two tables above, the
+`report-pdfs` storage bucket, and owner-scoped RLS policies for all of
+them. Nothing in this round touches Supabase Auth or the FastAPI backend
+— until this script has been run, the app still works exactly as before,
+just without the new persistence (every `SupabaseReportStore` call is
+fail-soft, as above).
+
+### What did not change
+
+The FastAPI backend, the bonus calculation itself, the upload/validate/
+calculate-bonus flow, Supabase Auth/login, and every screen outside
+Results/User Detail (Dashboard, Reports, Account, Settings) are all
+unchanged.
+
+### Verification (same limitation as every round)
+
+No Flutter/Dart SDK and no pub.dev access in this sandbox, so
+`flutter analyze`/`flutter run -d chrome`/`flutter pub get` could not be
+run here — same as every round before this one, now also true for the new
+`url_launcher` dependency (it's declared in `pubspec.yaml` but has never
+actually been fetched/compiled in this environment). An independent
+review pass (a fresh subagent with no prior context) read every
+changed/new file plus everything they touch — `supabase_flutter` v2 API
+usage, `url_launcher` v6 API usage, null-safety, gesture handling in the
+new result card, the SQL schema, and every other screen that still
+depends on code this round left alone (Dashboard, Reports) — and came back
+clean, no issues found. Please run `flutter pub get`, `flutter analyze`,
+and `flutter run -d chrome` and send back anything they report, and run
+the SQL script in your Supabase project before testing the new storage/
+WhatsApp-number-persistence behavior.

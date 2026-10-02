@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../core/api_exception.dart';
@@ -11,13 +13,15 @@ import '../services/activity_log_store.dart';
 import '../services/bonus_api_service.dart';
 import '../services/local_report_store.dart';
 import '../services/reports_api_service.dart';
+import '../services/supabase_report_store.dart';
 import '../services/whatsapp_api_service.dart';
 
 /// Single point of access for everything report/bonus/WhatsApp related.
 /// Screens depend on this, never on the API services directly — this is
 /// where the "which backend endpoint does this call" decision lives, and
-/// where the local "last report" convenience (see LocalReportStore) and
-/// the local activity log (see ActivityLogStore) are layered on top of the
+/// where the local "last report" convenience (see LocalReportStore), the
+/// local activity log (see ActivityLogStore), and the durable per-account
+/// Supabase copy (see SupabaseReportStore) are all layered on top of the
 /// real backend calls.
 class ReportRepository extends ChangeNotifier {
   ReportRepository({
@@ -27,12 +31,14 @@ class ReportRepository extends ChangeNotifier {
     required LocalReportStore localStore,
     required ActivityLogStore activityLog,
     required String? Function() currentUserId,
+    SupabaseReportStore? supabaseStore,
   })  : _reportsApi = reportsApi,
         _bonusApi = bonusApi,
         _whatsappApi = whatsappApi,
         _localStore = localStore,
         _activityLog = activityLog,
-        _currentUserId = currentUserId;
+        _currentUserId = currentUserId,
+        _supabaseStore = supabaseStore ?? SupabaseReportStore();
 
   final ReportsApiService _reportsApi;
   final BonusApiService _bonusApi;
@@ -40,6 +46,7 @@ class ReportRepository extends ChangeNotifier {
   final LocalReportStore _localStore;
   final ActivityLogStore _activityLog;
   final String? Function() _currentUserId;
+  final SupabaseReportStore _supabaseStore;
 
   /// Report ids for which a WhatsApp send has completed in this session —
   /// used only to know when to show WhatsApp status alongside results
@@ -102,6 +109,20 @@ class ReportRepository extends ChangeNotifier {
       detail: '${response.totalRecords} record(s) extracted from '
           '${response.pagesProcessed} page(s)',
     );
+    // Durable, per-account copy in Supabase (report metadata + the PDF
+    // itself) — fire-and-forget: this never blocks or fails the upload
+    // that already succeeded against the real backend above.
+    unawaited(_supabaseStore.saveReportMeta(
+      reportId: response.reportId,
+      fileName: response.fileName,
+      status: response.status,
+      totalRecords: response.totalRecords,
+    ));
+    unawaited(_supabaseStore.uploadReportPdf(
+      reportId: response.reportId,
+      fileName: response.fileName,
+      fileBytes: fileBytes,
+    ));
     notifyListeners();
     return response;
   }
@@ -204,16 +225,64 @@ class ReportRepository extends ChangeNotifier {
           ? '${summary.calculatedCount} bonus(es) calculated'
           : 'Bonus calculation did not complete successfully',
     );
+    // Same durable Supabase copy as uploadReport, now with the real
+    // calculated results too — fire-and-forget, never blocks this call.
+    unawaited(_supabaseStore.saveReportMeta(
+      reportId: reportId,
+      status: summary.status,
+      totalRecords: summary.totalInputRecords,
+      bonusEligibleCount: bonusEligible,
+      totalBonus: totalBonus,
+    ));
+    unawaited(_supabaseStore.saveResults(reportId, summary.results));
     notifyListeners();
     return summary;
   }
 
-  Future<List<BonusResult>> getResults(String reportId) {
-    return _forgetReportIfNotFound(reportId, () => _bonusApi.getResults(reportId));
+  /// Results for a report, with any admin-entered WhatsApp number (saved
+  /// earlier in Supabase — see [saveWhatsAppNumber]) merged back in for
+  /// rows that don't already have one. The FastAPI backend stays the
+  /// source of truth whenever it's reachable; its response is also written
+  /// through to Supabase so it stays available if the backend can't be
+  /// reached next time (see the fallback below) — satisfies "results
+  /// remain available after refresh/logout-login" even without a live
+  /// backend connection, for whatever this account already has saved.
+  Future<List<BonusResult>> getResults(String reportId) async {
+    try {
+      final results =
+          await _forgetReportIfNotFound(reportId, () => _bonusApi.getResults(reportId));
+      final merged = await _supabaseStore.mergeWhatsAppNumbers(reportId, results);
+      unawaited(_supabaseStore.saveResults(reportId, merged));
+      return merged;
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.notFound) rethrow;
+      final cached = await _supabaseStore.getCachedResults(reportId);
+      if (cached.isNotEmpty) return cached;
+      rethrow;
+    }
   }
 
-  Future<BonusResult> getUserResult(String reportId, String userId) {
-    return _bonusApi.getUserResult(reportId, userId);
+  Future<BonusResult> getUserResult(String reportId, String userId) async {
+    final result = await _bonusApi.getUserResult(reportId, userId);
+    final merged = await _supabaseStore.mergeWhatsAppNumbers(reportId, [result]);
+    return merged.first;
+  }
+
+  /// Saves (or updates) the WhatsApp number an admin typed in for one
+  /// user's result row. There is no FastAPI endpoint for this — the
+  /// backend's extracted data either has a number or it doesn't — so this
+  /// is Supabase-only, exactly like the rest of this round's persistence.
+  /// Never throws (see [SupabaseReportStore]).
+  Future<void> saveWhatsAppNumber(
+    String reportId,
+    BonusResult result,
+    String whatsappNumber,
+  ) {
+    return _supabaseStore.updateWhatsAppNumber(
+      reportId: reportId,
+      result: result,
+      whatsappNumber: whatsappNumber,
+    );
   }
 
   Future<WhatsAppSendSummary> sendWhatsApp(String reportId, {bool force = false}) async {
