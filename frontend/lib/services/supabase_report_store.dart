@@ -132,6 +132,29 @@ class SupabaseReportStore {
     }
   }
 
+  /// Removes this account's durable copy of a report: its saved results, its
+  /// row, and its PDF in Storage. Called after the backend has deleted the
+  /// report; never throws (needs the delete policies in
+  /// `supabase/numberspeaks_delete_policies.sql`, otherwise it does nothing).
+  Future<void> deleteReport(String reportId) async {
+    final client = _client;
+    final owner = _ownerId;
+    if (client == null || owner == null) return;
+    try {
+      await client.from(_resultsTable).delete().eq('owner_id', owner).eq('report_id', reportId);
+      await client.from(_reportsTable).delete().eq('owner_id', owner).eq('report_id', reportId);
+      final folder = '$owner/$reportId';
+      final files = await client.storage.from(_pdfBucket).list(path: folder);
+      if (files.isNotEmpty) {
+        await client.storage
+            .from(_pdfBucket)
+            .remove([for (final f in files) '$folder/${f.name}']);
+      }
+    } catch (e) {
+      debugPrint('SupabaseReportStore.deleteReport failed (non-fatal): $e');
+    }
+  }
+
   /// Overlays each result's `whatsappNumber` with an admin-entered number
   /// saved earlier for that same row, but only when the row itself doesn't
   /// already have one — a number actually present in the PDF/backend data

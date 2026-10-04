@@ -2,6 +2,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/api_exception.dart';
 import '../core/app_theme.dart';
 import '../core/formatters.dart';
 import '../core/report_actions.dart';
@@ -68,6 +69,41 @@ class _ReportsTabState extends State<ReportsTab> {
     _load();
   }
 
+  /// Asks first, then permanently deletes the report (PDF, results and
+  /// WhatsApp history) on the backend. The repository notifies on success,
+  /// which reloads this list and the other tabs.
+  Future<void> _confirmAndDelete(LocalReportEntry report) async {
+    final name = report.fileName.isNotEmpty ? report.fileName : 'this report';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete report?'),
+        content: Text(
+          'This permanently deletes $name, its PDF and all of its bonus results. '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _repo.deleteReport(report.reportId);
+      messenger.showSnackBar(const SnackBar(content: Text('Report deleted.')));
+    } on ApiException catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(e.userMessage), backgroundColor: AppTheme.danger),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -103,7 +139,8 @@ class _ReportsTabState extends State<ReportsTab> {
               ),
             )
           else
-            for (final report in _reports) _ReportCard(report: report),
+            for (final report in _reports)
+              _ReportCard(report: report, onDelete: () => _confirmAndDelete(report)),
           const SizedBox(height: AppSpacing.xl),
         ],
       ),
@@ -113,8 +150,9 @@ class _ReportsTabState extends State<ReportsTab> {
 
 class _ReportCard extends StatelessWidget {
   final LocalReportEntry report;
+  final VoidCallback onDelete;
 
-  const _ReportCard({required this.report});
+  const _ReportCard({required this.report, required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -144,6 +182,11 @@ class _ReportCard extends StatelessWidget {
                     ),
                   ),
                   StatusPill.forReportStatus(ReportStatus.fromString(report.status)),
+                  IconButton(
+                    tooltip: 'Delete report',
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline, color: AppTheme.danger),
+                  ),
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),

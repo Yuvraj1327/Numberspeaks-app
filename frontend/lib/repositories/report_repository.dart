@@ -182,6 +182,8 @@ class ReportRepository extends ChangeNotifier {
     }
     await _localStore.removeReport(reportId);
     _sessionWhatsAppSummaries.remove(reportId);
+    // The account's durable copy (PDF + saved results) goes too; fail-soft.
+    await _supabaseStore.deleteReport(reportId);
     notifyListeners();
   }
 
