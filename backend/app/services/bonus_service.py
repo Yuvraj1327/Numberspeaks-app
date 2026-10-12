@@ -23,8 +23,9 @@ reports for previous balances) and adds a new history run each time.
 
 import logging
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from supabase import Client
@@ -46,6 +47,7 @@ from app.services.reports_service import (
     bonus_result_row_to_raw,
     chunked,
     default_row_reference,
+    safe_error,
     to_bonus_result,
     update_calculation_status,
 )
@@ -54,6 +56,8 @@ from app.services.users_service import previous_balances
 from app.services.validation import validate_record
 
 logger = logging.getLogger("numberspeaks")
+
+SAVE_WORKERS = 8  # parallel row-save requests during a calculation
 
 
 def run_bonus_calculation(
@@ -91,7 +95,7 @@ def run_bonus_calculation(
                 try:
                     update_calculation_status(db, owner_id, bonus_result_id, "invalid")
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Could not persist 'invalid' status for row %s: %s", bonus_result_id, exc)
+                    logger.warning("Could not persist 'invalid' status for row %s: %s", bonus_result_id, safe_error(exc))
             continue
 
         valid.append((row, outcome))
@@ -145,10 +149,12 @@ def run_bonus_calculation(
     history_rows: List[dict] = []
     calculated = 0
 
+    # Compute every row's figures first (pure, no I/O), then save them with a
+    # few parallel requests: one sequential round trip per user is what made a
+    # large report exceed the app's request timeout.
+    planned: List[Tuple[dict, ExtractedRecord, dict, object]] = []
     for row, record in valid:
         user_id = row["user_id"]
-        bonus_result_id = row["id"]
-        user_name = (row.get("users") or {}).get("name")
 
         personal = personal_adjustment(record.profit_loss, personal_rate)
         settlement = settle_balance(
@@ -171,16 +177,31 @@ def run_bonus_calculation(
             "calculation_status": "calculated",
             "calculated_at": now,
         }
+        planned.append((row, record, update, settlement))
 
+    def save_row(item: Tuple[dict, ExtractedRecord, dict, object]) -> Optional[Exception]:
+        row, _record, update, _settlement = item
         try:
-            db.table("bonus_results").update(update).eq("owner_id", owner_id).eq("id", bonus_result_id).execute()
+            db.table("bonus_results").update(update).eq("owner_id", owner_id).eq("id", row["id"]).execute()
+            return None
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not save bonus for %r (row %s): %s", user_name, bonus_result_id, exc)
+            return exc
+
+    with ThreadPoolExecutor(max_workers=SAVE_WORKERS) as pool:
+        save_errors = list(pool.map(save_row, planned))
+
+    for (row, record, update, settlement), save_error in zip(planned, save_errors):
+        user_id = row["user_id"]
+        bonus_result_id = row["id"]
+        user_name = (row.get("users") or {}).get("name")
+
+        if save_error is not None:
+            logger.warning("Could not save bonus for row %s: %s", bonus_result_id, safe_error(save_error))
             errors.append(
                 BonusCalculationError(
                     bonus_result_id=bonus_result_id,
                     user_name=user_name,
-                    issues=[f"Calculated but could not be saved: {exc}"],
+                    issues=["Calculated but could not be saved. Please calculate again."],
                 )
             )
             continue
@@ -214,12 +235,12 @@ def run_bonus_calculation(
                 {"amount": float(amount), "adjustment": float(adjustment), "calculated_at": now}
             ).eq("owner_id", owner_id).eq("id", entry_id).execute()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not save referral entry %s: %s", entry_id, exc)
+            logger.warning("Could not save referral entry %s: %s", entry_id, safe_error(exc))
             errors.append(
                 BonusCalculationError(
                     bonus_result_id=None,
                     user_name=None,
-                    issues=[f"A referral entry was applied but its amount could not be saved: {exc}"],
+                    issues=["A referral entry was applied but its amount could not be saved. Please calculate again."],
                 )
             )
 
@@ -227,12 +248,12 @@ def run_bonus_calculation(
         try:
             db.table("calculation_history").insert(chunk).execute()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not save calculation history: %s", exc)
+            logger.warning("Could not save calculation history: %s", safe_error(exc))
             errors.append(
                 BonusCalculationError(
                     bonus_result_id=None,
                     user_name=None,
-                    issues=[f"Bonuses were saved but part of the calculation history could not be recorded: {exc}"],
+                    issues=["Bonuses were saved but part of the calculation history could not be recorded."],
                 )
             )
 

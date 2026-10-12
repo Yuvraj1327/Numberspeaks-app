@@ -11,6 +11,7 @@ import '../models/report_summary.dart';
 import '../repositories/auth_repository.dart';
 import '../repositories/report_repository.dart';
 import '../routing/app_routes.dart';
+import '../widgets/app_logo.dart';
 import '../widgets/empty_view.dart';
 import '../widgets/error_view.dart';
 import '../widgets/loading_view.dart';
@@ -40,7 +41,6 @@ class _DashboardTabState extends State<DashboardTab> {
   String? _errorMessage;
 
   List<ReportSummary> _reports = [];
-  ReportSummary? _calculated; // newest completed report
   List<BonusResult> _results = [];
   int _seenRevision = -1;
 
@@ -85,7 +85,6 @@ class _DashboardTabState extends State<DashboardTab> {
       if (!mounted) return;
       setState(() {
         _reports = reports;
-        _calculated = calculated;
         _results = results;
         _loading = false;
         _errorMessage = null;
@@ -127,18 +126,33 @@ class _DashboardTabState extends State<DashboardTab> {
         padding: const EdgeInsets.all(AppSpacing.md),
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          Text(
-            'Welcome${auth.userEmail != null ? ', ${auth.userEmail}' : ''}',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Hello \u{1F44B}',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(color: AppTheme.textMuted, fontWeight: FontWeight.w400),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _displayName(auth.userEmail),
+                      style: Theme.of(context).textTheme.headlineSmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const AppLogo(size: 46),
+            ],
           ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            _calculated == null
-                ? 'Upload a report to calculate bonuses.'
-                : 'Figures below are from your latest calculated report: ${_calculated!.fileName}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
-          ),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpacing.lg),
 
           // --- Summary cards -------------------------------------------
           LayoutBuilder(
@@ -153,7 +167,7 @@ class _DashboardTabState extends State<DashboardTab> {
                   label: 'Total Reports',
                   value: '${_reports.length}',
                   icon: Icons.folder_copy_outlined,
-                  color: AppTheme.navy,
+                  color: AppTheme.textMuted,
                 ),
                 _SummaryTile(
                   label: 'Users Processed',
@@ -168,13 +182,13 @@ class _DashboardTabState extends State<DashboardTab> {
                   color: AppTheme.danger,
                 ),
                 _SummaryTile(
-                  label: 'Total Payable',
-                  value: Formatters.rupees(totalPayable),
+                  label: 'Total Bonus',
+                  value: totalPayable.toStringAsFixed(2),
                   icon: Icons.savings_outlined,
                   color: AppTheme.teal,
                 ),
                 _SummaryTile(
-                  label: 'WhatsApp Opened',
+                  label: 'WhatsApp Sent',
                   value: '$opened',
                   icon: Icons.chat_bubble_outline,
                   color: AppTheme.success,
@@ -190,16 +204,17 @@ class _DashboardTabState extends State<DashboardTab> {
                 crossAxisCount: columns,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: AppSpacing.sm,
-                crossAxisSpacing: AppSpacing.sm,
-                childAspectRatio: 1.3,
+                mainAxisSpacing: AppSpacing.md,
+                crossAxisSpacing: AppSpacing.md,
+                childAspectRatio: columns == 2 ? 1.15 : 1.3,
                 children: tiles,
               );
             },
           ),
           const SizedBox(height: AppSpacing.md),
 
-          // --- Quick Upload action -----------------------------------
+          Text('Quick Actions', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: AppSpacing.sm + 4),
           _QuickUploadCard(onTap: () => Navigator.of(context).pushNamed(AppRoutes.upload)),
           const SizedBox(height: AppSpacing.md),
 
@@ -278,48 +293,40 @@ class _QuickUploadCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
+    final theme = Theme.of(context);
+    return Card(
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
         onTap: onTap,
-        child: Container(
+        child: Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
-            color: AppTheme.navy,
-            borderRadius: BorderRadius.circular(16),
-          ),
           child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(10),
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppTheme.blue.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(Icons.upload_file_outlined, color: AppTheme.cyan),
+                child: const Icon(Icons.upload_file_outlined, color: AppTheme.blue, size: 26),
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Upload Report',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(color: Colors.white, fontWeight: FontWeight.w600),
-                    ),
+                    Text('Upload Report', style: theme.textTheme.titleMedium),
                     const SizedBox(height: 2),
                     Text(
                       'Upload a PDF report to calculate bonuses',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70),
+                      style: theme.textTheme.bodySmall,
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
+              const SizedBox(width: AppSpacing.sm),
+              const Icon(Icons.arrow_forward, color: AppTheme.blue, size: 22),
             ],
           ),
         ),
@@ -328,8 +335,7 @@ class _QuickUploadCard extends StatelessWidget {
   }
 }
 
-/// One summary card in the Dashboard's overview grid. Compact by design so
-/// six of them tile without leaving large empty gaps on any screen size.
+/// One summary card in the Dashboard's overview grid.
 class _SummaryTile extends StatelessWidget {
   final String label;
   final String value;
@@ -345,38 +351,52 @@ class _SummaryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.sm + 2),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Container(
-              padding: const EdgeInsets.all(6),
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, size: 16, color: color),
+              child: Icon(icon, size: 22, color: color),
             ),
-            const Spacer(),
-            Text(
-              value,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold),
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
-              overflow: TextOverflow.ellipsis,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.textMuted),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
   }
+}
+
+String _displayName(String? email) {
+  if (email == null || email.isEmpty) return 'Welcome';
+  final local = email.split('@').first;
+  return local.isEmpty ? email : local;
 }

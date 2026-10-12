@@ -23,7 +23,7 @@ router = APIRouter(prefix="/reports", tags=["Referrals"])
     response_model=List[ReferralEntry],
     summary="List the referral entries of a report (period)",
 )
-async def list_referrals(
+def list_referrals(
     report_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -38,7 +38,7 @@ async def list_referrals(
     status_code=status.HTTP_201_CREATED,
     summary="Add a referral entry (referrer + referred user) for this period",
 )
-async def add_referral(
+def add_referral(
     report_id: str,
     payload: ReferralCreate,
     current_user: CurrentUser = Depends(get_current_user),
@@ -54,7 +54,7 @@ async def add_referral(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove a referral entry",
 )
-async def remove_referral(
+def remove_referral(
     report_id: str,
     entry_id: str,
     current_user: CurrentUser = Depends(get_current_user),

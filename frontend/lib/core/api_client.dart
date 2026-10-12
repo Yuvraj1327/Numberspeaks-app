@@ -57,9 +57,17 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> post(String path, {Map<String, dynamic>? body}) async {
+  Future<Map<String, dynamic>> post(
+    String path, {
+    Map<String, dynamic>? body,
+    Duration? receiveTimeout,
+  }) async {
     try {
-      final response = await _dio.post<dynamic>(path, data: body);
+      final response = await _dio.post<dynamic>(
+        path,
+        data: body,
+        options: receiveTimeout == null ? null : Options(receiveTimeout: receiveTimeout),
+      );
       return _asMap(response.data);
     } on DioException catch (e) {
       throw _mapError(e);

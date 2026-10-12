@@ -93,9 +93,9 @@ class AppTheme {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
-        elevation: 12,
-        shadowColor: navy.withValues(alpha: 0.25),
-        indicatorColor: blue.withValues(alpha: 0.12),
+        elevation: 8,
+        shadowColor: navy.withValues(alpha: 0.12),
+        indicatorColor: blue.withValues(alpha: 0.14),
         indicatorShape: const StadiumBorder(),
         height: 72,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
@@ -165,12 +165,12 @@ class AppTheme {
       cardTheme: CardThemeData(
         // Soft, wide, low-opacity shadow + hairline border: reads as a
         // clean floating card on the off-white page.
-        elevation: 3,
-        shadowColor: navy.withValues(alpha: 0.10),
+        elevation: 0,
+        shadowColor: navy.withValues(alpha: 0.06),
         color: Colors.white,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(24),
           side: const BorderSide(color: hairline),
         ),
         margin: EdgeInsets.zero,

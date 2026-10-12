@@ -21,6 +21,7 @@ from supabase import Client
 
 from app.api.deps import CurrentUser, assert_report_modifiable, get_current_user, get_db, get_report_or_404
 from app.schemas.bonus import BonusCalculationSummary, BonusResult
+from app.services.report_locks import report_busy_guard
 from app.services.bonus_service import run_bonus_calculation
 from app.services.reports_service import (
     get_bonus_result_for_user,
@@ -40,12 +41,16 @@ router = APIRouter(prefix="/reports", tags=["Bonus"])
     response_model=BonusCalculationSummary,
     summary="Confirm: calculate and save the bonus for every user in a validated report",
 )
-async def calculate_bonus_for_report(
+def calculate_bonus_for_report(
     report_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
 ) -> BonusCalculationSummary:
-    owner_id = current_user.id
+    with report_busy_guard(report_id, "calculation"):
+        return _calculate(db, current_user.id, report_id)
+
+
+def _calculate(db: Client, owner_id: str, report_id: str) -> BonusCalculationSummary:
     report = get_report_or_404(db, owner_id, report_id)
 
     if report.get("status") != "validated":
@@ -109,7 +114,7 @@ async def calculate_bonus_for_report(
     response_model=List[BonusResult],
     summary="Get bonus results for a report (also the extracted rows, for review)",
 )
-async def get_report_results(
+def get_report_results(
     report_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -124,7 +129,7 @@ async def get_report_results(
     response_model=BonusResult,
     summary="Get one user's bonus result for a report",
 )
-async def get_user_result(
+def get_user_result(
     report_id: str,
     user_id: str,
     current_user: CurrentUser = Depends(get_current_user),

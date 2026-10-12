@@ -78,6 +78,14 @@ def is_unique_violation(exc: Exception) -> bool:
     return code == "23505" or "23505" in text or "duplicate key" in text
 
 
+def safe_error(exc: BaseException) -> str:
+    """A log-safe description of an exception: its type and database error
+    code only. PostgREST error text can quote the failing row (names, phone
+    numbers, amounts), so the message itself is never logged."""
+    code = getattr(exc, "code", None)
+    return f"{type(exc).__name__}" + (f" (code {code})" if code else "")
+
+
 def _f(value: object) -> Optional[float]:
     """numeric column -> float, keeping NULL as None."""
     if value is None:
@@ -431,13 +439,13 @@ def save_extracted_records(
             for row in created.data:
                 users_by_name[row["name"]] = row
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Bulk user insert failed (%s); retrying row by row", exc)
+            logger.warning("Bulk user insert failed (%s); retrying row by row", safe_error(exc))
             for r in chunk:
                 try:
                     user_id = get_or_create_user(db, owner_id, r.user_name, r.level, r.whatsapp_number)
                     users_by_name[r.user_name] = {"id": user_id, "name": r.user_name}
                 except Exception as row_exc:  # noqa: BLE001
-                    warnings.append(f"Could not save user '{r.user_name}' (page {r.source_page}): {row_exc}")
+                    warnings.append(f"Could not save user '{r.user_name}' (page {r.source_page}).")
 
     # --- refresh details of users that already existed -------------------------
     for r in unique:
@@ -453,7 +461,7 @@ def save_extracted_records(
             try:
                 db.table("users").update(updates).eq("owner_id", owner_id).eq("id", user["id"]).execute()
             except Exception as exc:  # noqa: BLE001
-                warnings.append(f"Could not update details for '{r.user_name}': {exc}")
+                warnings.append(f"Could not update details for '{r.user_name}'.")
 
     # --- insert the report's rows (bulk) ----------------------------------------
     rows = []
@@ -483,14 +491,14 @@ def save_extracted_records(
             db.table("bonus_results").insert(payload).execute()
             saved += len(chunk)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Bulk result insert failed (%s); retrying row by row", exc)
+            logger.warning("Bulk result insert failed (%s); retrying row by row", safe_error(exc))
             for row, single in zip(chunk, payload):
                 try:
                     db.table("bonus_results").insert(single).execute()
                     saved += 1
                 except Exception as row_exc:  # noqa: BLE001
                     warnings.append(
-                        f"Could not save row for '{row['_name']}' (page {row['_page']}): {row_exc}"
+                        f"Could not save row for '{row['_name']}' (page {row['_page']})."
                     )
 
     return saved, warnings

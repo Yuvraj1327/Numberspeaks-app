@@ -5,6 +5,7 @@ import '../core/app_theme.dart';
 import '../core/logout_helper.dart';
 import '../repositories/auth_repository.dart';
 import '../routing/app_routes.dart';
+import '../widgets/screen_header.dart';
 
 /// Kept in sync with `pubspec.yaml`'s `version:` field by hand — adding a
 /// package just to read it back at runtime (`package_info_plus`) would be
@@ -30,6 +31,8 @@ class SettingsTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
+        const ScreenHeader(eyebrow: 'Preferences', title: 'Settings'),
+        const SizedBox(height: AppSpacing.lg),
         _SettingsGroup(
           children: [
             _SettingsTile(
@@ -165,13 +168,17 @@ class _SettingsTile extends StatelessWidget {
     return Column(
       children: [
         ListTile(
-          leading: Icon(icon, color: iconColor ?? AppTheme.primary),
-          title: Text(title, style: TextStyle(color: titleColor, fontWeight: FontWeight.w500)),
-          subtitle: subtitle != null ? Text(subtitle!) : null,
-          trailing: const Icon(Icons.chevron_right, color: Colors.black26),
+          contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 2),
+          leading: IconBadge(icon: icon, color: iconColor ?? AppTheme.blue, size: 40),
+          title: Text(title,
+              style: TextStyle(color: titleColor, fontSize: 15, fontWeight: FontWeight.w500)),
+          subtitle: subtitle != null
+              ? Text(subtitle!, style: Theme.of(context).textTheme.bodySmall)
+              : null,
+          trailing: const Icon(Icons.chevron_right, color: AppTheme.textMuted),
           onTap: onTap,
         ),
-        if (showDivider) const Divider(height: 1, indent: 56),
+        if (showDivider) const Divider(height: 1, indent: 72, endIndent: AppSpacing.md),
       ],
     );
   }

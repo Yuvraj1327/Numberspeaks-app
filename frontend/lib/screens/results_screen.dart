@@ -14,6 +14,7 @@ import '../widgets/empty_view.dart';
 import '../widgets/error_view.dart';
 import '../widgets/grid_table.dart';
 import '../widgets/loading_view.dart';
+import '../widgets/screen_header.dart';
 import '../widgets/status_pill.dart';
 import '../widgets/whatsapp_message_dialog.dart';
 import '../widgets/whatsapp_number_dialog.dart';
@@ -80,6 +81,11 @@ class ResultsScreen extends StatelessWidget {
   }
 }
 
+const _tabHeader = Padding(
+  padding: EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+  child: ScreenHeader(eyebrow: 'Bonus calculation', title: 'Results'),
+);
+
 /// Results tab (inside [MainShell]): a picker over this admin's report
 /// history (loaded from the backend, so it is the same on every device),
 /// and the results table of the selected report.
@@ -145,15 +151,26 @@ class _ResultsTabState extends State<ResultsTab> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const LoadingView();
-    if (_errorMessage != null) return ErrorView(message: _errorMessage!, onRetry: _loadReports);
+    if (_loading || _errorMessage != null) {
+      return Column(
+        children: [
+          _tabHeader,
+          Expanded(
+            child: _loading
+                ? const LoadingView()
+                : ErrorView(message: _errorMessage!, onRetry: _loadReports),
+          ),
+        ],
+      );
+    }
     if (_selectedId == null) {
       return RefreshIndicator(
         onRefresh: _loadReports,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
-            SizedBox(height: 120),
+            _tabHeader,
+            SizedBox(height: 100),
             EmptyView(
               icon: Icons.bar_chart_outlined,
               message: 'No results yet.\nUpload and process a report to see bonus results here.',
@@ -166,6 +183,7 @@ class _ResultsTabState extends State<ResultsTab> {
     final revision = context.read<ReportRepository>().structureRevision;
     return Column(
       children: [
+        _tabHeader,
         _ReportPicker(
           reports: _reports,
           selectedId: _selectedId!,
@@ -240,8 +258,9 @@ class _ReportPicker extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 10),
           decoration: BoxDecoration(
-            color: AppTheme.surfaceMuted,
-            borderRadius: BorderRadius.circular(12),
+            color: Colors.white,
+            border: Border.all(color: AppTheme.hairline),
+            borderRadius: BorderRadius.circular(16),
           ),
           child: Row(
             children: [
@@ -306,6 +325,9 @@ class _ResultsBodyState extends State<_ResultsBody> {
   String _query = '';
   _SortOption _sort = _SortOption.nameAsc;
   _FilterOption _filter = _FilterOption.all;
+  // Only the newest load may update the screen: a slower, older response
+  // (e.g. a quiet refresh overtaken by a manual reload) must not overwrite it.
+  int _loadId = 0;
 
   @override
   void initState() {
@@ -320,6 +342,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
   }
 
   Future<void> _load({bool silent = false}) async {
+    final loadId = ++_loadId;
     if (!silent) {
       setState(() {
         _loading = true;
@@ -328,9 +351,13 @@ class _ResultsBodyState extends State<_ResultsBody> {
     }
     final repo = context.read<ReportRepository>();
     try {
-      final results = await repo.getResults(widget.reportId);
-      final report = await repo.getReport(widget.reportId);
-      if (!mounted) return;
+      final fetched = await Future.wait([
+        repo.getResults(widget.reportId),
+        repo.getReport(widget.reportId),
+      ]);
+      final results = fetched[0] as List<BonusResult>;
+      final report = fetched[1] as ReportSummary;
+      if (!mounted || loadId != _loadId) return;
       setState(() {
         _results = results;
         _report = report;
@@ -338,7 +365,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
         _errorMessage = null;
       });
     } on ApiException catch (e) {
-      if (!mounted) return;
+      if (!mounted || loadId != _loadId) return;
       setState(() {
         // A failed quiet refresh keeps showing what is already on screen.
         if (!silent || _results.isEmpty) _errorMessage = e.userMessage;
@@ -461,13 +488,27 @@ class _ResultsBodyState extends State<_ResultsBody> {
     if (_loading) return const LoadingView();
     if (_errorMessage != null) return ErrorView(message: _errorMessage!, onRetry: _load);
     if (_results.isEmpty) {
+      final String message;
+      switch (ReportStatus.fromString(_report?.status)) {
+        case ReportStatus.uploaded:
+        case ReportStatus.processing:
+        case ReportStatus.validating:
+        case ReportStatus.calculating:
+          message = 'This report is still being processed.\nPull down to refresh.';
+          break;
+        case ReportStatus.failed:
+          message = 'Processing this report failed, so there are no results.\nPull down to refresh.';
+          break;
+        default:
+          message = 'No users in this report.';
+      }
       return RefreshIndicator(
         onRefresh: _load,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 120),
-            EmptyView(message: 'No users in this report.'),
+          children: [
+            const SizedBox(height: 120),
+            EmptyView(message: message),
           ],
         ),
       );
@@ -572,21 +613,99 @@ class _ResultsBodyState extends State<_ResultsBody> {
         Expanded(
           child: visible.isEmpty
               ? const EmptyView(message: 'No users match your search.', icon: Icons.search_off)
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  // The table's rows scroll inside a horizontal scroller, so
-                  // the vertical list is one level deeper than the default.
-                  notificationPredicate: (notification) => notification.depth == 1,
-                  child: GridTable(
-                    columns: _columns,
-                    itemCount: visible.length,
-                    rowHeight: 68,
-                    onRowTap: (index) => _openDetail(visible[index]),
-                    cellsBuilder: (context, index) => _cells(visible[index]),
-                  ),
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (constraints.maxWidth < _tableMinWidth) {
+                      return RefreshIndicator(
+                        onRefresh: _load,
+                        child: ListView.separated(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(
+                            AppSpacing.md, 0, AppSpacing.md, AppSpacing.md,
+                          ),
+                          itemCount: visible.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+                          itemBuilder: (context, index) => _resultCard(visible[index]),
+                        ),
+                      );
+                    }
+                    return RefreshIndicator(
+                      onRefresh: _load,
+                      // The table's rows scroll inside a horizontal scroller, so
+                      // the vertical list is one level deeper than the default.
+                      notificationPredicate: (notification) => notification.depth == 1,
+                      child: GridTable(
+                        columns: _columns,
+                        itemCount: visible.length,
+                        rowHeight: 68,
+                        onRowTap: (index) => _openDetail(visible[index]),
+                        cellsBuilder: (context, index) => _cells(visible[index]),
+                      ),
+                    );
+                  },
                 ),
         ),
       ],
+    );
+  }
+
+  /// Below this width the 8-column table would need sideways scrolling to be
+  /// read, so each user is shown as a card instead (same cells, same actions).
+  static const _tableMinWidth = 760.0;
+
+  Widget _resultCard(BonusResult r) {
+    final cells = _cells(r);
+    // Column order: 0 name, 1-4 figures, 5 final payable, 6 number, 7 action.
+    Widget figure(int i) => Row(
+          children: [
+            Expanded(
+              child: Text(
+                _columns[i].label,
+                style: const TextStyle(fontSize: 12.5, color: Colors.black54),
+              ),
+            ),
+            cells[i],
+          ],
+        );
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _openDetail(r),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: cells[0]),
+                  const SizedBox(width: AppSpacing.sm),
+                  cells[5],
+                ],
+              ),
+              const Divider(height: AppSpacing.lg),
+              figure(1),
+              const SizedBox(height: 4),
+              figure(2),
+              const SizedBox(height: 4),
+              figure(3),
+              const SizedBox(height: 4),
+              figure(4),
+              const Divider(height: AppSpacing.lg),
+              Row(
+                children: [
+                  Expanded(child: Align(alignment: Alignment.centerLeft, child: cells[6])),
+                  const SizedBox(width: AppSpacing.sm),
+                  cells[7],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -768,10 +887,11 @@ class _SummaryChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: AppTheme.surfaceMuted,
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+        border: Border.all(color: AppTheme.hairline),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

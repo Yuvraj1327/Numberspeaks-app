@@ -83,7 +83,7 @@ def verify_supabase_token(token: str, client: Optional[httpx.Client] = None) -> 
     try:
         response = http.get(url, headers=headers)
     except httpx.HTTPError as exc:
-        logger.warning("Could not reach Supabase Auth to verify a token: %s", exc)
+        logger.warning("Could not reach Supabase Auth to verify a token (%s)", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not reach the authentication service. Please try again.",

@@ -19,6 +19,7 @@ row.
 import logging
 from typing import List
 
+from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from supabase import Client
 
@@ -27,6 +28,7 @@ from app.schemas.bonus import BonusResult, RowCorrection
 from app.schemas.report import ReportSummary, UploadReportResponse
 from app.schemas.validation import ValidationSummary
 from app.services.corrections_service import apply_row_correction
+from app.services.report_locks import report_busy_guard
 from app.services.pdf_extractor import PdfExtractionError, extract_records_from_pdf
 from app.services.reports_service import (
     bonus_result_row_to_raw,
@@ -52,7 +54,7 @@ MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB.
 
 
 @router.get("", response_model=List[ReportSummary], summary="List this admin's reports (history), newest first")
-async def list_my_reports(
+def list_my_reports(
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
 ) -> List[ReportSummary]:
@@ -60,7 +62,7 @@ async def list_my_reports(
 
 
 @router.get("/{report_id}", response_model=ReportSummary, summary="Get one report")
-async def get_one_report(
+def get_one_report(
     report_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -98,6 +100,13 @@ async def upload_report(
             detail=f"File too large. Maximum allowed size is {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB.",
         )
 
+    # Extraction (CPU) and every Supabase call below are blocking, so they run
+    # in the threadpool — never on the event loop, which would stall every
+    # other request (status checks, row saves) for the whole upload.
+    return await run_in_threadpool(_extract_and_store, db, owner_id, filename, file_bytes)
+
+
+def _extract_and_store(db: Client, owner_id: str, filename: str, file_bytes: bytes) -> UploadReportResponse:
     # --- 2. Extract table data from every page (no DB involved yet) ---------
     try:
         extraction = extract_records_from_pdf(file_bytes)
@@ -158,17 +167,18 @@ async def upload_report(
     response_model=BonusResult,
     summary="Correct a misread value in one extracted row (before confirming the calculation)",
 )
-async def correct_row(
+def correct_row(
     report_id: str,
     bonus_result_id: str,
     correction: RowCorrection,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
 ) -> BonusResult:
-    report = get_report_or_404(db, current_user.id, report_id)
-    assert_report_modifiable(db, current_user.id, report)
-    row = apply_row_correction(db, current_user.id, report, bonus_result_id, correction)
-    return to_bonus_result(row)
+    with report_busy_guard(report_id, "row save"):
+        report = get_report_or_404(db, current_user.id, report_id)
+        assert_report_modifiable(db, current_user.id, report)
+        row = apply_row_correction(db, current_user.id, report, bonus_result_id, correction)
+        return to_bonus_result(row)
 
 
 @router.post(
@@ -176,12 +186,16 @@ async def correct_row(
     response_model=ValidationSummary,
     summary="Validate a report's extracted rows before bonus calculation",
 )
-async def validate_report(
+def validate_report(
     report_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
 ) -> ValidationSummary:
-    owner_id = current_user.id
+    with report_busy_guard(report_id, "validation"):
+        return _validate(db, current_user.id, report_id)
+
+
+def _validate(db: Client, owner_id: str, report_id: str) -> ValidationSummary:
     report = get_report_or_404(db, owner_id, report_id)
     if report.get("status") == "completed":
         # Validating a completed report reopens it, which is only safe while

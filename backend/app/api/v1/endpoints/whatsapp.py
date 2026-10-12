@@ -23,7 +23,7 @@ router = APIRouter(prefix="/reports", tags=["WhatsApp"])
     response_model=WhatsAppInitiatedResponse,
     summary="Record that WhatsApp was opened with a pre-filled message for this result",
 )
-async def whatsapp_initiated(
+def whatsapp_initiated(
     report_id: str,
     bonus_result_id: str,
     payload: WhatsAppInitiatedRequest,

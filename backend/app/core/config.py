@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # --- General ---
     APP_NAME: str = "Numberspeaks API"
     ENVIRONMENT: str = "development"  # development | staging | production
-    DEBUG: bool = True
+    DEBUG: bool = False  # set DEBUG=true locally only; never in production
 
     # --- Server ---
     # Railway injects PORT at runtime. Default is for local development only.

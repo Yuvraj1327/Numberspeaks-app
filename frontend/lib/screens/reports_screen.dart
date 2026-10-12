@@ -12,6 +12,7 @@ import '../routing/app_routes.dart';
 import '../widgets/empty_view.dart';
 import '../widgets/error_view.dart';
 import '../widgets/loading_view.dart';
+import '../widgets/screen_header.dart';
 import '../widgets/status_pill.dart';
 
 /// Reports tab (embedded inside [MainShell]): the full report history of the
@@ -81,6 +82,8 @@ class _ReportsTabState extends State<ReportsTab> {
         padding: const EdgeInsets.all(AppSpacing.md),
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
+          const ScreenHeader(eyebrow: 'Your uploads', title: 'Reports'),
+          const SizedBox(height: AppSpacing.lg),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -90,8 +93,8 @@ class _ReportsTabState extends State<ReportsTab> {
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
-          Text('Report history', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: AppSpacing.sm),
+          const SectionTitle('Report history'),
+          const SizedBox(height: AppSpacing.sm + 4),
           if (_loading)
             const Padding(
               padding: EdgeInsets.only(top: AppSpacing.xl),
@@ -130,7 +133,7 @@ class ReportCard extends StatelessWidget {
     final action = resolveNextAction(report.status);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm + 4),
       child: Card(
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
@@ -139,20 +142,13 @@ class ReportCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppTheme.surfaceMuted,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.picture_as_pdf_outlined, color: AppTheme.primary),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
+                  const IconBadge(icon: Icons.picture_as_pdf_outlined, color: AppTheme.blue),
+                  const SizedBox(width: AppSpacing.sm + 4),
                   Expanded(
                     child: Text(
                       report.fileName.isNotEmpty ? report.fileName : 'Report',
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
                   StatusPill.forReportStatus(ReportStatus.fromString(report.status)),
@@ -165,16 +161,16 @@ class ReportCard extends StatelessWidget {
                     child: Text(
                       Formatters.dateTime(report.uploadedAt),
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
                   if (report.userCount > 0) ...[
                     const SizedBox(width: AppSpacing.sm),
-                    const Text('•', style: TextStyle(color: Colors.black38)),
+                    const Text('•', style: TextStyle(color: AppTheme.textMuted)),
                     const SizedBox(width: AppSpacing.sm),
                     Text(
                       '${report.userCount} user(s)',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
                 ],
@@ -186,7 +182,7 @@ class ReportCard extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
                   decoration: BoxDecoration(
                     color: AppTheme.teal.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
                     '${report.payableUserCount} of ${report.userCount} user(s) payable • '

@@ -405,10 +405,57 @@ class _EditRowSheetState extends State<_EditRowSheet> {
       Navigator.of(context).pop(saved);
     } on ApiException catch (e) {
       if (!mounted) return;
+      // A timeout does not mean the save failed: ask the server what it holds
+      // before reporting anything, and never ask the admin to blindly resubmit.
+      if (e.kind == ApiErrorKind.timeout) {
+        final saved = await _findSavedRow(changes);
+        if (!mounted) return;
+        if (saved != null) {
+          Navigator.of(context).pop(saved);
+          return;
+        }
+      }
       setState(() {
         _saving = false;
-        _error = e.userMessage;
+        _error = e.kind == ApiErrorKind.timeout
+            ? 'The server did not confirm the save in time. Nothing was lost on screen — '
+                'press Save again to retry (saving the same values twice is safe).'
+            : e.userMessage;
       });
+    }
+  }
+
+  /// The row as stored on the server if it already holds every value in
+  /// [changes], else null.
+  Future<BonusResult?> _findSavedRow(Map<String, dynamic> changes) async {
+    try {
+      final rows = await context.read<ReportRepository>().getResults(widget.reportId);
+      final row = rows.where((r) => r.bonusResultId == widget.row.bonusResultId).firstOrNull;
+      if (row == null) return null;
+      final stored = <String, dynamic>{
+        'user_name': row.userName,
+        'casino_pts': row.casinoPts,
+        'sport_pts': row.sportPts,
+        'third_party_pts': row.thirdPartyPts,
+        'profit_loss': row.profitLoss,
+        'level': row.level ?? '',
+        'ptype': row.ptype ?? '',
+      };
+      for (final entry in changes.entries) {
+        if (entry.key == 'whatsapp_number') continue; // stored normalised; not comparable verbatim
+        if (stored[entry.key] != entry.value) return null;
+      }
+      if (changes.containsKey('whatsapp_number')) {
+        final sent = (changes['whatsapp_number'] as String).replaceAll(RegExp(r'[^0-9]'), '');
+        final have = (row.whatsappNumber ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+        final matches = sent.isEmpty
+            ? have.isEmpty
+            : have.isNotEmpty && (have.endsWith(sent) || sent.endsWith(have));
+        if (!matches) return null;
+      }
+      return row;
+    } on ApiException {
+      return null;
     }
   }
 

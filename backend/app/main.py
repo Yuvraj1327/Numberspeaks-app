@@ -16,6 +16,7 @@ from postgrest.exceptions import APIError
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.services.reports_service import safe_error
 
 settings = get_settings()
 
@@ -24,6 +25,15 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("numberspeaks")
+
+# Third-party HTTP stacks log request/response headers and bodies at DEBUG
+# (httpcore, hpack, h2 ...) — including the Supabase service-role key and
+# bearer tokens — and flood the log. Keep them quiet whatever DEBUG is.
+for _noisy in (
+    "httpx", "httpcore", "hpack", "h2", "hyperframe", "urllib3",
+    "postgrest", "storage3", "supabase", "supabase_functions", "gotrue", "realtime", "websockets",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -51,13 +61,15 @@ app.include_router(api_router, prefix="/api/v1")
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Turns FastAPI's default validation error into a consistent shape."""
-    logger.warning("Validation error on %s: %s", request.url.path, exc.errors())
+    # Only where and why — never `input`, which holds the request body.
+    problems = [(".".join(str(p) for p in err.get("loc", ())), err.get("type")) for err in exc.errors()]
+    logger.warning("Validation error on %s: %s", request.url.path, problems)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "success": False,
             "error": "Validation error",
-            "details": exc.errors(),
+            "details": [{k: v for k, v in err.items() if k not in ("input", "ctx")} for err in exc.errors()],
         },
     )
 
@@ -66,7 +78,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def database_error_handler(request: Request, exc: APIError):
     """A failed Supabase/PostgREST call. The details go to the log only —
     raw database error text is never sent to the client."""
-    logger.error("Database error on %s: %s", request.url.path, exc)
+    logger.error("Database error on %s: %s", request.url.path, safe_error(exc))
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"detail": "The database request failed. Please try again."},

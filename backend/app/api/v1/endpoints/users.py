@@ -34,7 +34,7 @@ def _user_or_404(db: Client, owner_id: str, user_id: str) -> dict:
 
 
 @router.get("", response_model=List[UserProfile], summary="List this admin's casino users")
-async def list_my_users(
+def list_my_users(
     q: Optional[str] = Query(None, description="Search by User ID / Name"),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -43,7 +43,7 @@ async def list_my_users(
 
 
 @router.get("/{user_id}", response_model=UserProfile, summary="Get one user, with their latest carried-forward balance")
-async def get_one_user(
+def get_one_user(
     user_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -54,7 +54,7 @@ async def get_one_user(
 
 
 @router.patch("/{user_id}", response_model=UserProfile, summary="Save or clear a user's WhatsApp number")
-async def update_one_user(
+def update_one_user(
     user_id: str,
     body: UserUpdate,
     current_user: CurrentUser = Depends(get_current_user),
@@ -65,7 +65,7 @@ async def update_one_user(
 
 
 @router.get("/{user_id}/history", response_model=UserHistory, summary="A user's full bonus calculation history")
-async def get_user_history(
+def get_user_history(
     user_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),

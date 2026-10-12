@@ -34,6 +34,8 @@ class AppConfig {
   static const Duration apiReceiveTimeout = Duration(seconds: 30);
   // Upload can take longer: PDFs may be large and extraction runs server-side
   // before the response is returned.
+  // Calculating a large report saves every user's row.
+  static const Duration apiCalculateTimeout = Duration(seconds: 120);
   static const Duration apiUploadTimeout = Duration(seconds: 120);
 
   static bool get isSupabaseConfigured =>

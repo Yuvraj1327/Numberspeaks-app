@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -47,9 +49,16 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
   // both would otherwise land under the same `_Step.failed` value.
   _Step? _failedAtStep;
   bool _isTimeout = false;
+  bool _retryAfterCalcTimeout = false;
   String? _errorMessage;
   ValidationSummary? _validationSummary;
   BonusCalculationSummary? _bonusSummary;
+  // Rows read back from the server when the calculation finished while this
+  // screen was no longer waiting for its response (timeout / retry).
+  List<BonusResult>? _recoveredResults;
+
+  static const _pollInterval = Duration(seconds: 3);
+  static const _pollAttempts = 40; // ~2 minutes
 
   @override
   void initState() {
@@ -67,11 +76,23 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
 
     final repo = context.read<ReportRepository>();
 
+    // Retrying after a timed-out calculation: it may well have finished (or
+    // still be running) on the server. Ask before starting a second run, so
+    // nothing is calculated — or written to the history — twice.
+    if (_retryAfterCalcTimeout) {
+      _retryAfterCalcTimeout = false;
+      if (await _awaitCalculation(repo, attempts: 1)) return;
+      if (!mounted) return;
+    }
+
     // --- Step 1: validate -------------------------------------------------
     ValidationSummary validation;
     try {
       validation = await repo.validateReport(widget.reportId);
     } on ApiException catch (e) {
+      if (!mounted) return;
+      // Our earlier request is still calculating on the server: wait for it.
+      if (_isBusy(e) && await _awaitCalculation(repo, attempts: _pollAttempts)) return;
       if (!mounted) return;
       setState(() {
         _step = _Step.failed;
@@ -108,10 +129,25 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
       bonus = await repo.calculateBonus(widget.reportId);
     } on ApiException catch (e) {
       if (!mounted) return;
+      // A timeout (or "busy" because our earlier request is still running)
+      // says nothing about the outcome: the server keeps calculating. Watch
+      // the report's status instead of declaring a failure.
+      if (e.kind == ApiErrorKind.timeout || _isBusy(e)) {
+        if (await _awaitCalculation(repo, attempts: _pollAttempts)) return;
+        if (!mounted) return;
+        setState(() {
+          _step = _Step.failed;
+          _failedAtStep = _Step.calculating;
+          _isTimeout = true;
+          _retryAfterCalcTimeout = true;
+          _errorMessage = 'The calculation is taking longer than expected.';
+        });
+        return;
+      }
       setState(() {
         _step = _Step.failed;
         _failedAtStep = _Step.calculating;
-        _isTimeout = e.kind == ApiErrorKind.timeout;
+        _isTimeout = false;
         _errorMessage = e.userMessage;
       });
       return;
@@ -131,6 +167,45 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
     }
 
     setState(() => _step = _Step.completed);
+  }
+
+  /// 409 from the backend's per-report guard: another calculate / validate /
+  /// row save of this report is still running.
+  bool _isBusy(ApiException e) => e.kind == ApiErrorKind.conflict && e.message.contains('is busy');
+
+  /// Polls the report until the server reports a final status. Returns true
+  /// once it has put the screen into the completed or failed state, false if
+  /// the report was still unfinished after [attempts] checks.
+  Future<bool> _awaitCalculation(ReportRepository repo, {required int attempts}) async {
+    for (var i = 0; i < attempts; i++) {
+      if (i > 0) await Future<void>.delayed(_pollInterval);
+      if (!mounted) return true;
+      try {
+        final report = await repo.getReport(widget.reportId);
+        if (!mounted) return true;
+        if (report.status == 'completed') {
+          final rows = await repo.getResults(widget.reportId);
+          if (!mounted) return true;
+          setState(() {
+            _recoveredResults = rows;
+            _step = _Step.completed;
+          });
+          return true;
+        }
+        if (report.status == 'failed') {
+          setState(() {
+            _step = _Step.failed;
+            _failedAtStep = _Step.calculating;
+            _isTimeout = false;
+            _errorMessage = 'Bonus calculation did not complete successfully.';
+          });
+          return true;
+        }
+      } on ApiException {
+        // Could not check this time; try again on the next round.
+      }
+    }
+    return false;
   }
 
   @override
@@ -175,7 +250,7 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
                       const SizedBox(height: AppSpacing.xs),
                       Text(
                         'This does not necessarily mean it failed — the server may still '
-                        'be working on it. Try again to check.',
+                        'be working on it. Try again to check; nothing is calculated twice.',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
                       ),
@@ -213,7 +288,7 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
   }
 
   String get _stageThreeLabel {
-    if (_step == _Step.failed) return _isTimeout ? 'Timed out' : 'Failed';
+    if (_step == _Step.failed) return _isTimeout ? 'Still working…' : 'Failed';
     return 'Completed';
   }
 
@@ -229,7 +304,7 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
   /// after calculating.
   Widget _buildCompletionSummary(BuildContext context) {
     final summary = _bonusSummary;
-    final results = summary?.results ?? const <BonusResult>[];
+    final results = summary?.results ?? _recoveredResults ?? const <BonusResult>[];
     final totalUsers = summary?.totalInputRecords ?? results.length;
     final payableUsers = summary?.payableUserCount ?? results.where((r) => r.hasPayableBonus).length;
     final totalPayable = summary?.totalPayable ?? results.fold<double>(0, (sum, r) => sum + r.payable);

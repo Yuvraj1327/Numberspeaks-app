@@ -1,4 +1,5 @@
 import '../core/api_client.dart';
+import '../core/app_config.dart';
 import '../models/bonus_calculation_summary.dart';
 import '../models/bonus_result.dart';
 
@@ -12,7 +13,10 @@ class BonusApiService {
 
   /// POST /api/v1/reports/{report_id}/calculate-bonus
   Future<BonusCalculationSummary> calculateBonus(String reportId) async {
-    final json = await _client.post('/reports/$reportId/calculate-bonus');
+    final json = await _client.post(
+      '/reports/$reportId/calculate-bonus',
+      receiveTimeout: AppConfig.apiCalculateTimeout,
+    );
     return BonusCalculationSummary.fromJson(json);
   }
 
