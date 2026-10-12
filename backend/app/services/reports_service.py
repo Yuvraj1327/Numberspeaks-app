@@ -159,26 +159,32 @@ def update_report_summary(db: Client, owner_id: str, report_id: str, fields: dic
     db.table("reports").update(fields).eq("owner_id", owner_id).eq("id", report_id).execute()
 
 
-def later_report_is_completed(db: Client, owner_id: str, report: dict) -> bool:
-    """True if a report uploaded AFTER this one has already been calculated.
+def first_later_completed_report(db: Client, owner_id: str, report: dict) -> Optional[dict]:
+    """The oldest report uploaded AFTER this one that has already been
+    calculated, or None.
 
-    Carry-forward balances flow from one period to the next, so recalculating
-    or reopening an older report once a newer one is calculated would leave
-    the newer report's "previous balance" stale. Callers block that case.
+    Carry-forward balances flow from one period to the next, so recalculating,
+    reopening or deleting an older report once a newer one is calculated would
+    leave the newer report's "previous balance" stale. Callers block that case.
     """
     uploaded_at = report.get("uploaded_at")
     if not uploaded_at:
-        return False
+        return None
     res = (
         db.table("reports")
-        .select("id")
+        .select("id, file_name, uploaded_at")
         .eq("owner_id", owner_id)
         .eq("status", "completed")
         .gt("uploaded_at", uploaded_at)
+        .order("uploaded_at")
         .limit(1)
         .execute()
     )
-    return bool(res.data)
+    return res.data[0] if res.data else None
+
+
+def later_report_is_completed(db: Client, owner_id: str, report: dict) -> bool:
+    return first_later_completed_report(db, owner_id, report) is not None
 
 
 def delete_report(db: Client, owner_id: str, report: dict) -> bool:

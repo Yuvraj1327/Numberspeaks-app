@@ -53,7 +53,9 @@ def test_requires_login(client):
 def test_older_calculated_report_is_protected_by_newer_one(a):
     old, _ = a.run_week([("Boss", -1000)], "old.pdf")
     new, _ = a.run_week([("Boss", -2000)], "new.pdf")
-    assert a.delete(f"/reports/{old}").status_code == 409
+    blocked = a.delete(f"/reports/{old}")
+    assert blocked.status_code == 409
+    assert "new.pdf" in blocked.json()["detail"] and "Delete the newer report first" in blocked.json()["detail"]
     assert a.get(f"/reports/{old}").status_code == 200
     assert a.delete(f"/reports/{new}").status_code == 204
     assert a.delete(f"/reports/{old}").status_code == 204  # now newest
@@ -75,3 +77,14 @@ def test_storage_failure_still_deletes_the_report(a, fake_db):
     fake_db.storage_fails = True
     assert a.delete(f"/reports/{rid}").status_code == 204
     assert a.get(f"/reports/{rid}").status_code == 404
+
+
+def test_repeated_delete_is_a_clean_404_and_busy_delete_is_explained(a):
+    from app.services.report_locks import report_busy_guard
+
+    rid = a.upload(ROWS, "a.pdf").json()["report_id"]
+    with report_busy_guard(rid, "deletion"):
+        busy = a.delete(f"/reports/{rid}")
+    assert busy.status_code == 409 and "is busy" in busy.json()["detail"]
+    assert a.delete(f"/reports/{rid}").status_code == 204
+    assert a.delete(f"/reports/{rid}").status_code == 404

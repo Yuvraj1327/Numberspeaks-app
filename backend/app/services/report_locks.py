@@ -27,8 +27,8 @@ def report_busy_guard(report_id: str, action: str) -> Iterator[None]:
     if not lock.acquire(blocking=False):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"This report is busy ({action} was requested while another change is still being "
-            "saved). Wait a moment and try again.",
+            detail=f"This report is busy: another change is still being saved, so the {action} was not "
+            "started. Wait a moment and try again.",
         )
     try:
         yield

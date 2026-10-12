@@ -102,6 +102,10 @@ class _ResultsTabState extends State<ResultsTab> {
   List<ReportSummary> _reports = [];
   String? _selectedId;
   int _seenRevision = -1;
+  // The revision the results table was last told to refresh for. It only
+  // advances once the report list has been reloaded, so a report that was just
+  // deleted is never fetched (404) before the selection moves off it.
+  int _bodyRevision = 0;
 
   @override
   void didChangeDependencies() {
@@ -137,6 +141,7 @@ class _ResultsTabState extends State<ResultsTab> {
       setState(() {
         _reports = reports;
         _selectedId = selected;
+        _bodyRevision = _seenRevision;
         _loading = false;
         _errorMessage = null;
       });
@@ -180,7 +185,7 @@ class _ResultsTabState extends State<ResultsTab> {
       );
     }
 
-    final revision = context.read<ReportRepository>().structureRevision;
+    final revision = _bodyRevision;
     return Column(
       children: [
         _tabHeader,

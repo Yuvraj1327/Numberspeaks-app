@@ -35,6 +35,7 @@ from app.services.reports_service import (
     create_report,
     default_row_reference,
     delete_report,
+    first_later_completed_report,
     get_bonus_results_for_report,
     list_reports,
     save_extracted_records,
@@ -87,7 +88,16 @@ def delete_one_report(
         if report.get("status") == "completed":
             # A later period's carried-forward balances were computed from this
             # one, so it can only go once no newer report is calculated.
-            assert_report_modifiable(db, current_user.id, report)
+            newer = first_later_completed_report(db, current_user.id, report)
+            if newer is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "This report can't be deleted yet: a newer report "
+                        f"('{newer.get('file_name') or 'Report'}') has already been calculated using this "
+                        "report's carried-forward balances. Delete the newer report first."
+                    ),
+                )
         delete_report(db, current_user.id, report)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
