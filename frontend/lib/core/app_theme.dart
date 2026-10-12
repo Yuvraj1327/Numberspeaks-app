@@ -182,6 +182,7 @@ class AppTheme {
       ),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
       dialogTheme: DialogThemeData(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),

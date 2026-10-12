@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../core/api_exception.dart';
 import '../core/app_theme.dart';
 import '../core/formatters.dart';
+import '../core/responsive.dart';
 import '../core/report_actions.dart';
 import '../models/bonus_result.dart';
 import '../models/report_status.dart';
@@ -123,7 +124,7 @@ class _DashboardTabState extends State<DashboardTab> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: Responsive.pageInsets(context),
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
           Row(
@@ -200,13 +201,23 @@ class _DashboardTabState extends State<DashboardTab> {
                   color: AppTheme.warning,
                 ),
               ];
+              final gap = Responsive.isCompact(context) ? AppSpacing.sm + 2 : AppSpacing.md;
+              // Fixed-ratio tiles clip on narrow screens or enlarged fonts, so
+              // the tile height follows the text size instead.
+              final textScaler = MediaQuery.textScalerOf(context);
+              final tileHeight = 2 * _SummaryTile.padding(context) +
+                  _SummaryTile.badge(context) +
+                  AppSpacing.sm +
+                  textScaler.scale(22) * 1.3 +
+                  textScaler.scale(14) * 1.45 +
+                  4;
               return GridView.count(
                 crossAxisCount: columns,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: AppSpacing.md,
-                crossAxisSpacing: AppSpacing.md,
-                childAspectRatio: columns == 2 ? 1.15 : 1.3,
+                mainAxisSpacing: gap,
+                crossAxisSpacing: gap,
+                childAspectRatio: (constraints.maxWidth - gap * (columns - 1)) / columns / tileHeight,
                 children: tiles,
               );
             },
@@ -246,7 +257,7 @@ class _DashboardTabState extends State<DashboardTab> {
                         const SizedBox(width: AppSpacing.sm),
                         Expanded(
                           child: Text(
-                            latest.fileName.isNotEmpty ? latest.fileName : 'Latest report',
+                            latest.periodStart != null ? latest.periodLabel : (latest.fileName.isNotEmpty ? latest.fileName : 'Latest report'),
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium
@@ -349,19 +360,24 @@ class _SummaryTile extends StatelessWidget {
     required this.color,
   });
 
+  static double padding(BuildContext context) =>
+      Responsive.isCompact(context) ? AppSpacing.sm + 4 : AppSpacing.md;
+  static double badge(BuildContext context) => Responsive.isCompact(context) ? 36 : 44;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final badge = _SummaryTile.badge(context);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: EdgeInsets.all(padding(context)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: badge,
+              height: badge,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(14),

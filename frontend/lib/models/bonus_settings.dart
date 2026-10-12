@@ -6,7 +6,10 @@ class BonusSettings {
   final double personalRate;
   final double referralRate;
 
-  const BonusSettings({required this.personalRate, required this.referralRate});
+  /// The admin's WhatsApp message template, or null for the built-in one.
+  final String? whatsappTemplate;
+
+  const BonusSettings({required this.personalRate, required this.referralRate, this.whatsappTemplate});
 
   double get personalPercent => personalRate * 100;
   double get referralPercent => referralRate * 100;
@@ -15,6 +18,7 @@ class BonusSettings {
     return BonusSettings(
       personalRate: toDouble(json['personal_rate']),
       referralRate: toDouble(json['referral_rate']),
+      whatsappTemplate: json['whatsapp_template'] as String?,
     );
   }
 }

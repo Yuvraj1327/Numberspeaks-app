@@ -16,7 +16,7 @@ from supabase import Client
 
 from app.schemas.users import HistoryEntry, UserProfile
 from app.services.bonus_calculator import ZERO, to_decimal
-from app.services.reports_service import fetch_all, is_valid_uuid, list_reports
+from app.services.reports_service import fetch_all, is_valid_uuid, list_reports, report_sort_key
 
 _PHONE_ALLOWED = re.compile(r"^\+?[0-9\s\-()]+$")
 
@@ -64,21 +64,35 @@ def list_users(db: Client, owner_id: str, query: Optional[str] = None) -> List[d
     return fetch_all(build)
 
 
-def update_whatsapp_number(db: Client, owner_id: str, user_id: str, number: Optional[str]) -> dict:
-    """Saves (or clears) the user's WhatsApp number permanently."""
-    cleaned = normalize_whatsapp_number(number)
+def update_user(db: Client, owner_id: str, user_id: str, changes: dict) -> dict:
+    """Edits a user's name, level and/or WhatsApp number (only the keys given)."""
     user = get_user(db, owner_id, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No user found with id {user_id}")
-    db.table("users").update({"whatsapp_number": cleaned}).eq("owner_id", owner_id).eq("id", user_id).execute()
-    user["whatsapp_number"] = cleaned
+    updates: dict = {}
+    if "whatsapp_number" in changes:
+        updates["whatsapp_number"] = normalize_whatsapp_number(changes["whatsapp_number"])
+    if "level" in changes:
+        updates["level"] = (changes["level"] or "").strip() or None
+    if "name" in changes:
+        name = (changes["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name cannot be empty.")
+        if name != user.get("name"):
+            clash = db.table("users").select("id").eq("owner_id", owner_id).eq("name", name).limit(1).execute()
+            if clash.data:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"A user named '{name}' already exists.")
+            updates["name"] = name
+    if updates:
+        db.table("users").update(updates).eq("owner_id", owner_id).eq("id", user_id).execute()
+        user.update(updates)
     return user
 
 
 def previous_balances(
     db: Client,
     owner_id: str,
-    before_uploaded_at: Optional[str] = None,
+    before_report: Optional[dict] = None,
     needed_user_ids: Optional[Set[str]] = None,
 ) -> Dict[str, Decimal]:
     """
@@ -86,15 +100,16 @@ def previous_balances(
     calculated period.
 
     "Earlier" = reports (of this admin) that are completed and were uploaded
-    before `before_uploaded_at` (or all completed reports if None). A user
+    chronologically before `before_report` (by period; all completed reports if None). A user
     absent from the immediately previous report keeps the balance from the
     last report they appeared in. Stops walking back as soon as every user
     in `needed_user_ids` is resolved.
     """
     reports = [r for r in list_reports(db, owner_id) if r.get("status") == "completed"]
-    if before_uploaded_at is not None:
-        reports = [r for r in reports if (r.get("uploaded_at") or "") < before_uploaded_at]
-    reports.sort(key=lambda r: r.get("uploaded_at") or "", reverse=True)
+    if before_report is not None:
+        limit = report_sort_key(before_report)
+        reports = [r for r in reports if r["id"] != before_report["id"] and report_sort_key(r) < limit]
+    reports.sort(key=report_sort_key, reverse=True)
 
     balances: Dict[str, Decimal] = {}
     for report in reports:

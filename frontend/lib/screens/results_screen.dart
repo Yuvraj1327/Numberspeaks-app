@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../core/api_exception.dart';
 import '../core/app_theme.dart';
+import '../core/responsive.dart';
 import '../core/formatters.dart';
 import '../models/bonus_result.dart';
 import '../models/report_status.dart';
@@ -243,7 +244,7 @@ class _ReportPicker extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          report.fileName.isNotEmpty ? report.fileName : 'Report',
+                          report.title,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
@@ -276,7 +277,7 @@ class _ReportPicker extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      selected.fileName.isNotEmpty ? selected.fileName : 'Report',
+                      selected.title,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
@@ -321,6 +322,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
     GridColumn('Final payable bonus', 140, numeric: true),
     GridColumn('WhatsApp number', 190),
     GridColumn('WhatsApp action', 150),
+    GridColumn('Edit', 90),
   ];
 
   bool _loading = true;
@@ -427,7 +429,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
       _replace(result.copyWith(whatsappNumber: saved, clearWhatsAppNumber: saved.isEmpty));
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(saved.isEmpty ? 'WhatsApp number removed.' : 'WhatsApp number saved.')),
+      SnackBar(
+          content: Text(saved.isEmpty ? 'WhatsApp number removed.' : 'WhatsApp number saved.')),
     );
   }
 
@@ -466,6 +469,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Recalculate this report?'),
         content: const Text(
           'Every user is calculated again with your current rates and referral entries. '
@@ -473,8 +477,10 @@ class _ResultsBodyState extends State<_ResultsBody> {
           'users\' history.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Recalculate')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(true), child: const Text('Recalculate')),
         ],
       ),
     );
@@ -502,7 +508,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
           message = 'This report is still being processed.\nPull down to refresh.';
           break;
         case ReportStatus.failed:
-          message = 'Processing this report failed, so there are no results.\nPull down to refresh.';
+          message =
+              'Processing this report failed, so there are no results.\nPull down to refresh.';
           break;
         default:
           message = 'No users in this report.';
@@ -521,137 +528,149 @@ class _ResultsBodyState extends State<_ResultsBody> {
 
     final visible = _filteredSorted;
     final calculated = _report?.status == 'completed';
+    // While the keyboard is up (search field) only the search row and the list
+    // are kept, so a small phone isn't left with a sliver of results.
+    return LayoutBuilder(builder: (context, constraints) {
+      final keyboardOpen = constraints.maxHeight < Responsive.shortBodyHeight;
 
-    return Column(
-      children: [
-        if (!calculated)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
-            child: Container(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(
-                color: AppTheme.warning.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.info_outline, color: AppTheme.warning),
-                  const SizedBox(width: AppSpacing.sm),
-                  const Expanded(
-                    child: Text(
-                      'This report has not been calculated (or was changed since). '
-                      'The figures below are not final.',
-                      style: TextStyle(fontSize: 12.5),
+      return Column(
+        children: [
+          if (!calculated && !keyboardOpen)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
+              child: Container(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, color: AppTheme.warning),
+                    const SizedBox(width: AppSpacing.sm),
+                    const Expanded(
+                      child: Text(
+                        'This report has not been calculated (or was changed since). '
+                        'The figures below are not final.',
+                        style: TextStyle(fontSize: 12.5),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  TextButton(onPressed: _openReview, child: const Text('Review & calculate')),
-                ],
+                    const SizedBox(width: AppSpacing.sm),
+                    TextButton(onPressed: _openReview, child: const Text('Review & calculate')),
+                  ],
+                ),
               ),
             ),
-          ),
-        _SummaryStrip(results: _results),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  decoration: const InputDecoration(
-                    hintText: 'Search by User ID / Name or number',
-                    prefixIcon: Icon(Icons.search),
-                    isDense: true,
+          if (!keyboardOpen) _SummaryStrip(results: _results),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      hintText: 'Search by User ID / Name or number',
+                      prefixIcon: Icon(Icons.search),
+                      isDense: true,
+                    ),
+                    onChanged: (value) => setState(() => _query = value),
                   ),
-                  onChanged: (value) => setState(() => _query = value),
                 ),
-              ),
-              PopupMenuButton<_SortOption>(
-                tooltip: 'Sort',
-                icon: const Icon(Icons.sort),
-                initialValue: _sort,
-                onSelected: (value) => setState(() => _sort = value),
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: _SortOption.nameAsc, child: Text('Name (A-Z)')),
-                  PopupMenuItem(value: _SortOption.nameDesc, child: Text('Name (Z-A)')),
-                  PopupMenuItem(value: _SortOption.payableHighLow, child: Text('Payable (high-low)')),
-                  PopupMenuItem(value: _SortOption.payableLowHigh, child: Text('Payable (low-high)')),
-                ],
-              ),
-              IconButton(
-                tooltip: 'Referrals',
-                icon: const Icon(Icons.group_add_outlined),
-                onPressed: _openReferrals,
-              ),
-              if (calculated)
+                PopupMenuButton<_SortOption>(
+                  tooltip: 'Sort',
+                  icon: const Icon(Icons.sort),
+                  initialValue: _sort,
+                  onSelected: (value) => setState(() => _sort = value),
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: _SortOption.nameAsc, child: Text('Name (A-Z)')),
+                    PopupMenuItem(value: _SortOption.nameDesc, child: Text('Name (Z-A)')),
+                    PopupMenuItem(
+                        value: _SortOption.payableHighLow, child: Text('Payable (high-low)')),
+                    PopupMenuItem(
+                        value: _SortOption.payableLowHigh, child: Text('Payable (low-high)')),
+                  ],
+                ),
                 IconButton(
-                  tooltip: 'Recalculate this report',
-                  icon: const Icon(Icons.calculate_outlined),
-                  onPressed: _recalculate,
+                  tooltip: 'Referrals',
+                  icon: const Icon(Icons.group_add_outlined),
+                  onPressed: _openReferrals,
                 ),
-            ],
+                if (calculated)
+                  IconButton(
+                    tooltip: 'Recalculate this report',
+                    icon: const Icon(Icons.calculate_outlined),
+                    onPressed: _recalculate,
+                  ),
+              ],
+            ),
           ),
-        ),
-        SizedBox(
-          height: 36,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            itemCount: _FilterOption.values.length,
-            separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.xs),
-            itemBuilder: (context, index) {
-              final option = _FilterOption.values[index];
-              final selected = option == _filter;
-              return ChoiceChip(
-                label: Text(option.label),
-                selected: selected,
-                onSelected: (_) => setState(() => _filter = option),
-                selectedColor: AppTheme.primary.withValues(alpha: 0.16),
-                labelStyle: TextStyle(
-                  color: selected ? AppTheme.primary : Colors.black87,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Expanded(
-          child: visible.isEmpty
-              ? const EmptyView(message: 'No users match your search.', icon: Icons.search_off)
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    if (constraints.maxWidth < _tableMinWidth) {
+          if (!keyboardOpen) ...[
+            SizedBox(
+              height: 36,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                itemCount: _FilterOption.values.length,
+                separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.xs),
+                itemBuilder: (context, index) {
+                  final option = _FilterOption.values[index];
+                  final selected = option == _filter;
+                  return ChoiceChip(
+                    label: Text(option.label),
+                    selected: selected,
+                    onSelected: (_) => setState(() => _filter = option),
+                    selectedColor: AppTheme.primary.withValues(alpha: 0.16),
+                    labelStyle: TextStyle(
+                      color: selected ? AppTheme.primary : Colors.black87,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          Expanded(
+            child: visible.isEmpty
+                ? const EmptyView(message: 'No users match your search.', icon: Icons.search_off)
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (constraints.maxWidth < _tableMinWidth) {
+                        return RefreshIndicator(
+                          onRefresh: _load,
+                          child: ListView.separated(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(
+                              AppSpacing.md,
+                              0,
+                              AppSpacing.md,
+                              AppSpacing.md,
+                            ),
+                            itemCount: visible.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+                            itemBuilder: (context, index) => _resultCard(visible[index]),
+                          ),
+                        );
+                      }
                       return RefreshIndicator(
                         onRefresh: _load,
-                        child: ListView.separated(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(
-                            AppSpacing.md, 0, AppSpacing.md, AppSpacing.md,
-                          ),
+                        // The table's rows scroll inside a horizontal scroller, so
+                        // the vertical list is one level deeper than the default.
+                        notificationPredicate: (notification) => notification.depth == 1,
+                        child: GridTable(
+                          columns: _columns,
                           itemCount: visible.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
-                          itemBuilder: (context, index) => _resultCard(visible[index]),
+                          rowHeight: Responsive.rowHeight(context, 68),
+                          onRowTap: (index) => _openDetail(visible[index]),
+                          cellsBuilder: (context, index) => _cells(visible[index]),
                         ),
                       );
-                    }
-                    return RefreshIndicator(
-                      onRefresh: _load,
-                      // The table's rows scroll inside a horizontal scroller, so
-                      // the vertical list is one level deeper than the default.
-                      notificationPredicate: (notification) => notification.depth == 1,
-                      child: GridTable(
-                        columns: _columns,
-                        itemCount: visible.length,
-                        rowHeight: 68,
-                        onRowTap: (index) => _openDetail(visible[index]),
-                        cellsBuilder: (context, index) => _cells(visible[index]),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
+                    },
+                  ),
+          ),
+        ],
+      );
+    });
   }
 
   /// Below this width the 8-column table would need sideways scrolling to be
@@ -661,15 +680,22 @@ class _ResultsBodyState extends State<_ResultsBody> {
   Widget _resultCard(BonusResult r) {
     final cells = _cells(r);
     // Column order: 0 name, 1-4 figures, 5 final payable, 6 number, 7 action.
+    // Label gets the larger share; a value that still doesn't fit scales down.
     Widget figure(int i) => Row(
           children: [
             Expanded(
+              flex: 3,
               child: Text(
                 _columns[i].label,
                 style: const TextStyle(fontSize: 12.5, color: Colors.black54),
               ),
             ),
-            cells[i],
+            const SizedBox(width: AppSpacing.sm),
+            Flexible(
+              flex: 2,
+              child: FittedBox(
+                  fit: BoxFit.scaleDown, alignment: Alignment.centerRight, child: cells[i]),
+            ),
           ],
         );
 
@@ -700,12 +726,12 @@ class _ResultsBodyState extends State<_ResultsBody> {
               const SizedBox(height: 4),
               figure(4),
               const Divider(height: AppSpacing.lg),
-              Row(
-                children: [
-                  Expanded(child: Align(alignment: Alignment.centerLeft, child: cells[6])),
-                  const SizedBox(width: AppSpacing.sm),
-                  cells[7],
-                ],
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.xs,
+                children: [cells[6], cells[7]],
               ),
             ],
           ),
@@ -743,6 +769,18 @@ class _ResultsBodyState extends State<_ResultsBody> {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 11.5, color: Colors.black54),
             ),
+          if (r.hasReferrer)
+            Text(
+              'Referred by ${r.referrerName}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11.5, color: AppTheme.blue, fontWeight: FontWeight.w600),
+            ),
+          if (r.referredCount > 0)
+            Text(
+              'Referrer · ${r.referredCount} referred',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11.5, color: AppTheme.success, fontWeight: FontWeight.w600),
+            ),
         ],
       ),
       // Profit / Loss
@@ -776,7 +814,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
                 if (carry < 0)
                   Text(
                     'carry ${Formatters.signed(carry)}',
-                    style: const TextStyle(fontSize: 11, color: AppTheme.danger, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                        fontSize: 11, color: AppTheme.danger, fontWeight: FontWeight.w600),
                   ),
               ],
             )
@@ -808,6 +847,12 @@ class _ResultsBodyState extends State<_ResultsBody> {
             ),
       // WhatsApp action
       _actionCell(r),
+      // Edit (opens the user's details: corrections, WhatsApp, referrals)
+      TextButton.icon(
+        onPressed: () => _openDetail(r),
+        icon: const Icon(Icons.edit_outlined, size: 16),
+        label: const Text('Edit'),
+      ),
     ];
   }
 
@@ -839,7 +884,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
         else if (r.whatsappInitiated)
           Text(
             'Opened ×${r.whatsappInitiatedCount > 0 ? r.whatsappInitiatedCount : 1}',
-            style: const TextStyle(fontSize: 10.5, color: AppTheme.blue, fontWeight: FontWeight.w700),
+            style:
+                const TextStyle(fontSize: 10.5, color: AppTheme.blue, fontWeight: FontWeight.w700),
           ),
       ],
     );
@@ -858,26 +904,39 @@ class _SummaryStrip extends StatelessWidget {
     final totalPayable = payableRows.fold<double>(0, (sum, r) => sum + r.payable);
     final carried = results.where((r) => (r.carryForwardBalance ?? 0) < 0).length;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
-      child: Wrap(
-        spacing: AppSpacing.sm,
-        runSpacing: AppSpacing.sm,
-        children: [
-          _SummaryChip(label: 'Users', value: '${results.length}'),
-          _SummaryChip(label: 'Payable users', value: '${payableRows.length}'),
-          _SummaryChip(
-            label: 'Total payable',
-            value: Formatters.rupees(totalPayable),
-            color: AppTheme.success,
-          ),
-          _SummaryChip(
-            label: 'Carried forward',
-            value: '$carried',
-            color: carried > 0 ? AppTheme.danger : null,
-          ),
-        ],
+    final chips = [
+      _SummaryChip(label: 'Users', value: '${results.length}'),
+      _SummaryChip(label: 'Payable users', value: '${payableRows.length}'),
+      _SummaryChip(
+        label: 'Total payable',
+        value: Formatters.rupees(totalPayable),
+        color: AppTheme.success,
       ),
+      _SummaryChip(
+        label: 'Carried forward',
+        value: '$carried',
+        color: carried > 0 ? AppTheme.danger : null,
+      ),
+    ];
+    final padding = Responsive.pagePadding(context);
+
+    // Phones: one swipeable row (a wrapped block of chips would push the
+    // results far down the screen); wider screens keep the wrapped layout.
+    if (MediaQuery.sizeOf(context).width < 600) {
+      return SizedBox(
+        height: 76 + (MediaQuery.textScalerOf(context).scale(25) - 25) * 1.4,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: EdgeInsets.symmetric(horizontal: padding, vertical: AppSpacing.sm),
+          itemCount: chips.length,
+          separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
+          itemBuilder: (context, index) => chips[index],
+        ),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(padding, AppSpacing.md, padding, AppSpacing.sm),
+      child: Wrap(spacing: AppSpacing.sm, runSpacing: AppSpacing.sm, children: chips),
     );
   }
 }

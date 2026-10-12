@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -50,15 +51,52 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
 
   String get _number => widget.result.whatsappNumber ?? '';
 
-  String get _defaultMessage => WhatsAppLink.defaultMessage(
-        userId: widget.result.userName,
-        payableBonus: widget.result.payable,
-      );
+  /// The admin's saved template (or the built-in one) filled in for this user.
+  String _template = WhatsAppLink.defaultTemplate;
+  String _week = '';
+
+  String get _defaultMessage {
+    final r = widget.result;
+    return WhatsAppLink.render(
+      _template,
+      userId: r.userName,
+      name: r.userName,
+      payableBonus: r.payable,
+      personalBonus: r.personalAdjustment ?? 0,
+      referralBonus: r.referralAdjustment ?? 0,
+      carriedBalance: r.previousBalance ?? 0,
+      week: _week,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _message = TextEditingController(text: _defaultMessage);
+    _loadTemplate();
+  }
+
+  /// Fetches the saved template and the week; replaces the text only if the
+  /// admin has not started typing their own.
+  Future<void> _loadTemplate() async {
+    final repo = context.read<ReportRepository>();
+    try {
+      final settings = await repo.getSettings();
+      final report = await repo.getReport(widget.result.reportId);
+      if (!mounted) return;
+      final untouched = _message.text == _defaultMessage;
+      _template = settings.whatsappTemplate ?? WhatsAppLink.defaultTemplate;
+      _week = report.periodLabel == '—' ? '' : report.periodLabel;
+      if (untouched && !_launchedAwaitingRecord) setState(() => _message.text = _defaultMessage);
+    } catch (_) {
+      // Keep the built-in message; the admin can still edit it.
+    }
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: _message.text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Message copied.')));
   }
 
   @override
@@ -141,6 +179,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      scrollable: true,
       title: const Text('Send WhatsApp'),
       content: SizedBox(
         width: 420,
@@ -182,7 +221,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
                 maxLines: 6,
                 maxLength: 1000,
                 decoration: const InputDecoration(
-                  labelText: 'Message (you can edit it)',
+                  labelText: 'Message preview (you can edit it)',
                   alignLabelWithHint: true,
                 ),
               ),
@@ -211,6 +250,11 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
         ),
       ),
       actions: [
+        TextButton.icon(
+          onPressed: _copy,
+          icon: const Icon(Icons.copy_outlined, size: 18),
+          label: const Text('Copy'),
+        ),
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
           child: Text(_launchedAwaitingRecord ? 'Close' : 'Cancel'),

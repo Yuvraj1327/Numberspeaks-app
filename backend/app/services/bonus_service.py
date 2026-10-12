@@ -119,7 +119,8 @@ def run_bonus_calculation(
     for entry in fetch_entry_rows(db, owner_id, report_id):
         referrer_id = entry["referrer_user_id"]
         referred_id = entry["referred_user_id"]
-        if referrer_id not in profit_loss_by_user or referred_id not in profit_loss_by_user:
+        manual = entry.get("manual_amount")
+        if referrer_id not in profit_loss_by_user or (manual is None and referred_id not in profit_loss_by_user):
             errors.append(
                 BonusCalculationError(
                     bonus_result_id=None,
@@ -131,7 +132,7 @@ def run_bonus_calculation(
                 )
             )
             continue
-        referred_pl = profit_loss_by_user[referred_id]
+        referred_pl = to_decimal(manual) if manual is not None else profit_loss_by_user[referred_id]
         adjustment = referral_adjustment(referred_pl, entry["rate"])
         referral_by_referrer[referrer_id] = money(referral_by_referrer.get(referrer_id, ZERO) + adjustment)
         entry_updates.append((entry["id"], referred_pl, adjustment))
@@ -139,7 +140,7 @@ def run_bonus_calculation(
     previous = previous_balances(
         db,
         owner_id,
-        before_uploaded_at=report.get("uploaded_at"),
+        before_report=report,
         needed_user_ids=set(profit_loss_by_user),
     )
 

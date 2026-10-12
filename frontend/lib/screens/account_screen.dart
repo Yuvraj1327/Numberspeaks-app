@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_theme.dart';
+import '../core/responsive.dart';
 import '../core/logout_helper.dart';
 import '../repositories/auth_repository.dart';
 import '../widgets/screen_header.dart';
@@ -21,7 +22,7 @@ class AccountTab extends StatelessWidget {
     final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
 
     return ListView(
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: Responsive.pageInsets(context),
       children: [
         const ScreenHeader(eyebrow: 'Your profile', title: 'Account'),
         const SizedBox(height: AppSpacing.lg),

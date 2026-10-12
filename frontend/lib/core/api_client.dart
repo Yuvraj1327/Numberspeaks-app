@@ -106,10 +106,12 @@ class ApiClient {
     String path, {
     required List<int> fileBytes,
     required String fileName,
+    Map<String, String>? fields,
     void Function(double progress)? onProgress,
   }) async {
     try {
       final formData = FormData.fromMap({
+        ...?fields,
         'file': MultipartFile.fromBytes(
           fileBytes,
           filename: fileName,
@@ -131,6 +133,19 @@ class ApiClient {
         },
       );
       return _asMap(response.data);
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
+  /// GET that returns raw bytes (CSV / JSON backup downloads).
+  Future<List<int>> getBytes(String path) async {
+    try {
+      final response = await _dio.get<List<int>>(
+        path,
+        options: Options(responseType: ResponseType.bytes, receiveTimeout: AppConfig.apiUploadTimeout),
+      );
+      return response.data ?? const [];
     } on DioException catch (e) {
       throw _mapError(e);
     }

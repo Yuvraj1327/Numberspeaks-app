@@ -1,7 +1,14 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/api_exception.dart';
 import '../core/app_theme.dart';
+import '../core/file_download.dart';
+import '../repositories/report_repository.dart';
+import '../core/responsive.dart';
 import '../core/logout_helper.dart';
 import '../repositories/auth_repository.dart';
 import '../routing/app_routes.dart';
@@ -29,7 +36,7 @@ class SettingsTab extends StatelessWidget {
     final auth = context.watch<AuthRepository>();
 
     return ListView(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: Responsive.pageInsets(context),
       children: [
         const ScreenHeader(eyebrow: 'Preferences', title: 'Settings'),
         const SizedBox(height: AppSpacing.lg),
@@ -48,9 +55,15 @@ class SettingsTab extends StatelessWidget {
               onTap: () => Navigator.of(context).pushNamed(AppRoutes.users),
             ),
             _SettingsTile(
+              icon: Icons.share_outlined,
+              title: 'Referrals',
+              subtitle: 'Users, referrers and the referral ledger',
+              onTap: () => Navigator.of(context).pushNamed(AppRoutes.referralHub),
+            ),
+            _SettingsTile(
               icon: Icons.tune_outlined,
-              title: 'Bonus rates',
-              subtitle: 'Personal and referral percentages',
+              title: 'Rates & WhatsApp message',
+              subtitle: 'Personal / referral percentages and the message template',
               onTap: () => Navigator.of(context).pushNamed(AppRoutes.rates),
             ),
             _SettingsTile(
@@ -77,6 +90,37 @@ class SettingsTab extends StatelessWidget {
         _SettingsGroup(
           children: [
             _SettingsTile(
+              icon: Icons.download_outlined,
+              title: 'Export users (CSV)',
+              onTap: () => downloadAndSave(context,
+                  apiPath: '/export/users.csv', fileName: 'users.csv', allowedExtension: 'csv'),
+            ),
+            _SettingsTile(
+              icon: Icons.table_view_outlined,
+              title: 'Export referral ledger (CSV)',
+              onTap: () => downloadAndSave(context,
+                  apiPath: '/export/referrals.csv', fileName: 'referral-ledger.csv', allowedExtension: 'csv'),
+            ),
+            _SettingsTile(
+              icon: Icons.backup_outlined,
+              title: 'Back up all data',
+              subtitle: 'Downloads one JSON file of users, weeks, referrals and settings',
+              onTap: () => downloadAndSave(context,
+                  apiPath: '/backup', fileName: 'numberspeaks-backup.json', allowedExtension: 'json'),
+            ),
+            _SettingsTile(
+              icon: Icons.restore_outlined,
+              title: 'Restore from backup',
+              subtitle: 'Merges a backup file into this account',
+              onTap: () => _restoreBackup(context),
+              showDivider: false,
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        _SettingsGroup(
+          children: [
+            _SettingsTile(
               icon: Icons.logout,
               title: 'Logout',
               iconColor: AppTheme.danger,
@@ -90,10 +134,50 @@ class SettingsTab extends StatelessWidget {
     );
   }
 
+  Future<void> _restoreBackup(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final repo = context.read<ReportRepository>();
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+    final bytes = picked?.files.single.bytes;
+    if (bytes == null || !context.mounted) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        scrollable: true,
+        title: const Text('Restore this backup?'),
+        content: const Text(
+          'Rows in the file are added to this account, and rows that already exist are set back to the '
+          'backed-up values. Nothing is deleted.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Restore')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map<String, dynamic>) throw const FormatException('not an object');
+      final result = await repo.restoreBackup(decoded);
+      final counts = (result['restored'] as Map?)?.entries.map((e) => '${e.value} ${e.key}').join(', ') ?? '';
+      messenger.showSnackBar(SnackBar(content: Text('Restored: $counts')));
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.userMessage)));
+    } on FormatException {
+      messenger.showSnackBar(const SnackBar(content: Text('That file is not a valid Numberspeaks backup.')));
+    }
+  }
+
   void _showThemeInfo(BuildContext context) {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Theme'),
         content: const Text(
           'Numberspeaks currently uses a light theme only. Dark theme '
@@ -110,6 +194,7 @@ class SettingsTab extends StatelessWidget {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('About Numberspeaks'),
         content: const Column(
           mainAxisSize: MainAxisSize.min,

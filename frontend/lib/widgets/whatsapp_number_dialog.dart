@@ -79,6 +79,7 @@ class _WhatsAppNumberDialogState extends State<_WhatsAppNumberDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      scrollable: true,
       title: Text('WhatsApp number — ${widget.userName}'),
       content: SizedBox(
         width: 380,

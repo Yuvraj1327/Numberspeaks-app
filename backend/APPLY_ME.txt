@@ -3,6 +3,8 @@ NUMBERSPEAKS BACKEND - Complete Bonus Management (changes-only)
 1. Unzip over your backend project folder (same relative paths; overwrite).
 2. Run supabase/multi_tenant_bonus_schema.sql in the Supabase SQL editor (additive, safe to re-run).
    Optional, once, BEFORE the first new upload: the "claim legacy data" statements at its bottom.
+2b. Then run supabase/period_referrers_schema.sql (additive, safe to re-run): weekly periods,
+   referrers table, manual referral amounts, saved WhatsApp template. Existing reports keep period = NULL.
 3. pip install -r requirements.txt   (and requirements-dev.txt for tests)
 4. python -m pytest                  (143 tests)
 5. Redeploy.

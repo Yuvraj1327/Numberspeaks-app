@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../core/api_exception.dart';
 import '../core/app_theme.dart';
+import '../core/responsive.dart';
 import '../core/formatters.dart';
 import '../core/report_actions.dart';
 import '../models/report_status.dart';
@@ -76,6 +77,7 @@ class _ReportsTabState extends State<ReportsTab> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Delete this report?'),
         content: Text(
           '"$name" will be permanently deleted together with its extracted rows, '
@@ -138,7 +140,7 @@ class _ReportsTabState extends State<ReportsTab> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: Responsive.pageInsets(context),
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
           const ScreenHeader(eyebrow: 'Your uploads', title: 'Reports'),
@@ -215,7 +217,7 @@ class ReportCard extends StatelessWidget {
                   const SizedBox(width: AppSpacing.sm + 4),
                   Expanded(
                     child: Text(
-                      report.fileName.isNotEmpty ? report.fileName : 'Report',
+                      report.title,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleMedium,
                     ),

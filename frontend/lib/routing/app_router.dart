@@ -4,6 +4,7 @@ import '../models/bonus_result.dart';
 import '../screens/login_screen.dart';
 import '../screens/main_shell.dart';
 import '../screens/rates_screen.dart';
+import '../screens/referral_hub_screen.dart';
 import '../screens/referrals_screen.dart';
 import '../screens/report_processing_screen.dart';
 import '../screens/report_review_screen.dart';
@@ -66,6 +67,9 @@ class AppRouter {
           builder: (_) => ReferralsScreen(reportId: reportId),
           settings: settings,
         );
+
+      case AppRoutes.referralHub:
+        return MaterialPageRoute(builder: (_) => const ReferralHubScreen(), settings: settings);
 
       case AppRoutes.users:
         return MaterialPageRoute(builder: (_) => const UsersScreen(), settings: settings);

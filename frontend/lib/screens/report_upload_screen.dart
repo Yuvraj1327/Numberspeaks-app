@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../core/api_exception.dart';
 import '../core/app_theme.dart';
+import '../core/formatters.dart';
 import '../models/upload_report_response.dart';
 import '../repositories/report_repository.dart';
 import '../routing/app_router.dart';
@@ -31,6 +32,49 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
   String? _errorMessage;
   UploadReportResponse? _uploadResponse;
 
+  /// The week this PDF covers. Defaults to the week after the latest report.
+  DateTimeRange? _period;
+
+  @override
+  void initState() {
+    super.initState();
+    _period = _currentWeek();
+    _suggestNextWeek();
+  }
+
+  static DateTimeRange _currentWeek() {
+    final now = DateTime.now();
+    final monday = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+    return DateTimeRange(start: monday, end: monday.add(const Duration(days: 6)));
+  }
+
+  Future<void> _suggestNextWeek() async {
+    try {
+      final reports = await context.read<ReportRepository>().listReports();
+      final latest = reports.where((r) => r.periodEnd != null).toList()
+        ..sort((a, b) => b.periodEnd!.compareTo(a.periodEnd!));
+      if (latest.isEmpty || !mounted) return;
+      final start = DateTime.parse(latest.first.periodStart!);
+      final end = DateTime.parse(latest.first.periodEnd!);
+      final length = end.difference(start);
+      final next = end.add(const Duration(days: 1));
+      setState(() => _period = DateTimeRange(start: next, end: next.add(length)));
+    } on ApiException {
+      // Keep the current-week default; the backend still guards duplicates.
+    }
+  }
+
+  Future<void> _pickPeriod() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(DateTime.now().year + 2, 12, 31),
+      initialDateRange: _period,
+      helpText: 'Select the week this report covers',
+    );
+    if (picked != null) setState(() => _period = picked);
+  }
+
   Future<void> _pickFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -56,10 +100,15 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
     });
   }
 
-  Future<void> _upload() async {
+  Future<void> _upload({bool replace = false}) async {
     final file = _selectedFile;
+    final period = _period;
     if (file == null || file.bytes == null) {
       setState(() => _errorMessage = 'Please select a PDF file first.');
+      return;
+    }
+    if (period == null) {
+      setState(() => _errorMessage = 'Please select the week this report covers.');
       return;
     }
 
@@ -74,6 +123,9 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
       final response = await repo.uploadReport(
         fileBytes: file.bytes!,
         fileName: file.name,
+        periodStart: Formatters.isoDate(period.start),
+        periodEnd: Formatters.isoDate(period.end),
+        replace: replace,
         onProgress: (p) {
           if (mounted) setState(() => _progress = p);
         },
@@ -85,11 +137,44 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
+      // Same week already imported: only a deliberate, confirmed replace goes on.
+      if (!replace && e.statusCode == 409 && e.message.contains('already exists')) {
+        setState(() => _state = _UploadState.idle);
+        if (await _confirmReplace(period)) {
+          await _upload(replace: true);
+        }
+        return;
+      }
       setState(() {
         _state = _UploadState.error;
         _errorMessage = e.userMessage;
       });
     }
+  }
+
+  Future<bool> _confirmReplace(DateTimeRange period) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        scrollable: true,
+        title: const Text('Replace this week?'),
+        content: Text(
+          'A report for ${Formatters.periodLabel(Formatters.isoDate(period.start), Formatters.isoDate(period.end))} '
+          'has already been imported. Replacing it removes that week\'s extracted rows and results '
+          '(your referral entries for the week are kept) and imports this PDF instead. '
+          'Other weeks are not touched.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep existing')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Replace'),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
   }
 
   String _formatFileSize(int bytes) {
@@ -147,6 +232,22 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
                     ),
                   ],
                 ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.date_range_outlined, color: AppTheme.primary),
+                title: const Text('Report week'),
+                subtitle: Text(
+                  _period == null
+                      ? 'Select a week'
+                      : Formatters.periodLabel(
+                          Formatters.isoDate(_period!.start), Formatters.isoDate(_period!.end)),
+                ),
+                trailing: const Icon(Icons.edit_calendar_outlined),
+                enabled: _state != _UploadState.uploading,
+                onTap: _state == _UploadState.uploading ? null : _pickPeriod,
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
@@ -217,7 +318,7 @@ class _ReportUploadScreenState extends State<ReportUploadScreen> {
               )
             else
               ElevatedButton.icon(
-                onPressed: _selectedFile == null || _state == _UploadState.uploading ? null : _upload,
+                onPressed: _selectedFile == null || _state == _UploadState.uploading ? null : () => _upload(),
                 icon: const Icon(Icons.upload_outlined),
                 label: const Text('Upload'),
               ),

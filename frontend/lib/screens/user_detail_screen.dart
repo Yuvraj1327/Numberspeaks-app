@@ -8,6 +8,8 @@ import '../models/bonus_result.dart';
 import '../models/user_profile.dart';
 import '../repositories/report_repository.dart';
 import '../routing/app_router.dart';
+import '../routing/app_routes.dart';
+import 'report_review_screen.dart' show EditRowSheet;
 import '../widgets/whatsapp_message_dialog.dart';
 import '../widgets/whatsapp_number_dialog.dart';
 
@@ -121,6 +123,83 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
     );
   }
 
+  /// Corrects the figures extracted from the report for this user (same
+  /// sheet as the review screen). The week must be recalculated afterwards.
+  Future<void> _editRow() async {
+    final result = _result;
+    final reportId = _reportId;
+    if (result == null || reportId == null) return;
+    final saved = await showModalBottomSheet<BonusResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => EditRowSheet(reportId: reportId, row: result),
+    );
+    if (saved == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Saved. Recalculate this week to update the bonus.')),
+    );
+    _load();
+  }
+
+  Future<void> _editUser() async {
+    final name = TextEditingController(text: _profile?.name ?? widget.args.userName);
+    final level = TextEditingController(text: _profile?.level ?? '');
+    final repo = context.read<ReportRepository>();
+    String? error;
+    final saved = await showDialog<UserProfile>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          scrollable: true,
+          title: const Text('Edit user'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: name, decoration: const InputDecoration(labelText: 'User ID / Name')),
+              const SizedBox(height: AppSpacing.sm),
+              TextField(controller: level, decoration: const InputDecoration(labelText: 'Level')),
+              if (error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(error!, style: const TextStyle(color: AppTheme.danger)),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                try {
+                  final updated = await repo.updateUser(widget.args.userId, {
+                    'name': name.text.trim(),
+                    'level': level.text.trim(),
+                  });
+                  if (context.mounted) Navigator.of(context).pop(updated);
+                } on ApiException catch (e) {
+                  setLocal(() => error = e.userMessage);
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    name.dispose();
+    level.dispose();
+    if (saved == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('User updated.')));
+    _load();
+  }
+
+  Future<void> _openReferrals() async {
+    final reportId = _reportId;
+    if (reportId == null) return;
+    await Navigator.of(context).pushNamed(AppRoutes.referrals, arguments: reportId);
+    if (mounted) _load();
+  }
+
   Future<void> _sendWhatsApp() async {
     final result = _result;
     final number = _number;
@@ -152,6 +231,11 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                   )
                 : const Icon(Icons.refresh),
             onPressed: _loading ? null : _load,
+          ),
+          IconButton(
+            tooltip: 'Edit user',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: _editUser,
           ),
         ],
       ),
@@ -189,7 +273,9 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (_result != null) ...[
-                    _RowDetailsCard(result: _result!),
+                    _ReferralCard(result: _result!, onManage: _openReferrals),
+                    const SizedBox(height: AppSpacing.md),
+                    _RowDetailsCard(result: _result!, onEdit: _editRow),
                     const SizedBox(height: AppSpacing.md),
                   ],
                   _HistoryCard(
@@ -392,12 +478,15 @@ class _BreakdownRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
-          Text(
-            value,
-            style: TextStyle(
-              fontWeight: bold ? FontWeight.w800 : FontWeight.w700,
-              fontSize: bold ? 16 : 14,
-              color: color,
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontWeight: bold ? FontWeight.w800 : FontWeight.w700,
+                fontSize: bold ? 16 : 14,
+                color: color,
+              ),
             ),
           ),
         ],
@@ -406,10 +495,12 @@ class _BreakdownRow extends StatelessWidget {
   }
 }
 
-class _RowDetailsCard extends StatelessWidget {
+/// Who referred this user this week, and how many users they referred.
+class _ReferralCard extends StatelessWidget {
   final BonusResult result;
+  final VoidCallback onManage;
 
-  const _RowDetailsCard({required this.result});
+  const _ReferralCard({required this.result, required this.onManage});
 
   @override
   Widget build(BuildContext context) {
@@ -420,7 +511,61 @@ class _RowDetailsCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('From the report', style: Theme.of(context).textTheme.titleSmall),
+            Text('Referrals this week', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: AppSpacing.sm),
+            _BreakdownRow(
+              label: 'Referred by',
+              value: r.hasReferrer ? '${r.referrerName} (${r.referrerUserId})' : 'Nobody',
+            ),
+            _BreakdownRow(label: 'Users they referred', value: '${r.referredCount}'),
+            _BreakdownRow(
+              label: 'Referral adjustment',
+              value: r.referralAdjustment == null ? '—' : Formatters.signed(r.referralAdjustment!),
+              isLast: true,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: onManage,
+                icon: const Icon(Icons.share_outlined, size: 18),
+                label: const Text('Manage referrals'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RowDetailsCard extends StatelessWidget {
+  final BonusResult result;
+  final VoidCallback onEdit;
+
+  const _RowDetailsCard({required this.result, required this.onEdit});
+
+  @override
+  Widget build(BuildContext context) {
+    final r = result;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text('From the report', style: Theme.of(context).textTheme.titleSmall),
+                TextButton.icon(
+                  onPressed: onEdit,
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('Correct values'),
+                ),
+              ],
+            ),
             const SizedBox(height: AppSpacing.sm),
             _BreakdownRow(label: 'User ID / Name', value: r.userName),
             _BreakdownRow(label: 'Level', value: r.level ?? '—'),
@@ -562,11 +707,14 @@ class _HistoryCard extends StatelessWidget {
               children: [
                 Expanded(child: Text('Calculation history', style: Theme.of(context).textTheme.titleSmall)),
                 if (carry != null)
-                  Text(
-                    'Balance: ${Formatters.signed(carry)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: carry < 0 ? AppTheme.danger : Colors.black54,
+                  Flexible(
+                    child: Text(
+                      'Balance: ${Formatters.signed(carry)}',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: carry < 0 ? AppTheme.danger : Colors.black54,
+                      ),
                     ),
                   ),
               ],
@@ -616,9 +764,13 @@ class _HistoryRow extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
-            Text(
-              Formatters.dateTime(e.calculatedAt),
-              style: const TextStyle(fontSize: 11.5, color: Colors.black45),
+            const SizedBox(width: AppSpacing.sm),
+            Flexible(
+              child: Text(
+                Formatters.dateTime(e.calculatedAt),
+                textAlign: TextAlign.right,
+                style: const TextStyle(fontSize: 11.5, color: Colors.black45),
+              ),
             ),
           ],
         ),

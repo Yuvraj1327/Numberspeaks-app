@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/responsive.dart';
 import 'account_screen.dart';
 import 'dashboard_screen.dart';
 import 'reports_screen.dart';
@@ -48,37 +49,66 @@ class _MainShellState extends State<MainShell> {
       // No AppBar here (see class doc) — SafeArea replaces the top inset
       // an AppBar would otherwise have provided, so content never sits
       // under a status bar/notch.
-      body: SafeArea(child: IndexedStack(index: _index, children: tabs)),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: _goToTab,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard),
-            label: 'Dashboard',
+      // On tablets / desktop windows the content stops growing at a readable
+      // width and is centred instead of stretching edge to edge.
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: Responsive.maxContentWidth),
+            child: IndexedStack(index: _index, children: tabs),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.description_outlined),
-            selectedIcon: Icon(Icons.description),
-            label: 'Reports',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart),
-            label: 'Results',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Account',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
+        ),
+      ),
+      bottomNavigationBar: _sizedNavigationBar(
+          context,
+          NavigationBar(
+            selectedIndex: _index,
+            onDestinationSelected: _goToTab,
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.dashboard_outlined),
+                selectedIcon: Icon(Icons.dashboard),
+                label: 'Dashboard',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.description_outlined),
+                selectedIcon: Icon(Icons.description),
+                label: 'Reports',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.bar_chart_outlined),
+                selectedIcon: Icon(Icons.bar_chart),
+                label: 'Results',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: 'Account',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
+                label: 'Settings',
+              ),
+            ],
+          )),
+    );
+  }
+
+  /// Keeps the five labels readable and unclipped on every phone: the bar is
+  /// a little shorter on narrow screens and its labels follow the system font
+  /// size only up to 1.2x (a bar that grows with huge fonts would eat the page).
+  Widget _sizedNavigationBar(BuildContext context, Widget bar) {
+    final media = MediaQuery.of(context);
+    final compact = Responsive.isCompact(context);
+    return MediaQuery(
+      data: media.copyWith(textScaler: media.textScaler.clamp(maxScaleFactor: 1.2)),
+      child: NavigationBarTheme(
+        data: NavigationBarTheme.of(context).copyWith(
+          height: compact ? 64 : 72,
+          labelPadding: EdgeInsets.zero,
+        ),
+        child: bar,
       ),
     );
   }

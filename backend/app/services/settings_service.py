@@ -16,6 +16,7 @@ def get_bonus_settings(db: Client, owner_id: str) -> BonusSettings:
         return BonusSettings(
             personal_rate=float(row["personal_rate"]),
             referral_rate=float(row["referral_rate"]),
+            whatsapp_template=row.get("whatsapp_template"),
             updated_at=row.get("updated_at"),
         )
     defaults = get_settings()
@@ -29,9 +30,18 @@ def save_bonus_settings(db: Client, owner_id: str, update: BonusSettingsUpdate) 
     current = get_bonus_settings(db, owner_id)
     personal = current.personal_rate if update.personal_rate is None else update.personal_rate
     referral = current.referral_rate if update.referral_rate is None else update.referral_rate
+    template = current.whatsapp_template
+    if update.whatsapp_template is not None:
+        template = update.whatsapp_template.strip() or None  # empty = back to the built-in default
     now = datetime.now(timezone.utc).isoformat()
     db.table("bonus_settings").upsert(
-        {"owner_id": owner_id, "personal_rate": personal, "referral_rate": referral, "updated_at": now},
+        {
+            "owner_id": owner_id,
+            "personal_rate": personal,
+            "referral_rate": referral,
+            "whatsapp_template": template,
+            "updated_at": now,
+        },
         on_conflict="owner_id",
     ).execute()
-    return BonusSettings(personal_rate=personal, referral_rate=referral, updated_at=now)
+    return BonusSettings(personal_rate=personal, referral_rate=referral, whatsapp_template=template, updated_at=now)

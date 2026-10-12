@@ -34,6 +34,43 @@ class WhatsAppLink {
         .replaceAll('{Bonus Amount}', formatBonusAmount(payableBonus));
   }
 
+  /// Every placeholder a template may use, with what it stands for.
+  static const Map<String, String> placeholders = {
+    '{User ID}': 'the user\'s User ID',
+    '{Name}': 'the user\'s name',
+    '{Bonus Amount}': 'final payable bonus',
+    '{Personal Bonus}': 'personal adjustment',
+    '{Referral Bonus}': 'referral adjustment',
+    '{Carried Balance}': 'balance carried from the previous week',
+    '{Week}': 'the week, e.g. 5–11 Oct 2026',
+  };
+
+  /// Fills a template. Unknown `{...}` text is left untouched; amounts are
+  /// plain two-decimal numbers (adjustments keep their sign).
+  static String render(
+    String template, {
+    required String userId,
+    required String name,
+    required double payableBonus,
+    double personalBonus = 0,
+    double referralBonus = 0,
+    double carriedBalance = 0,
+    String week = '',
+  }) {
+    final values = <String, String>{
+      '{User ID}': userId,
+      '{Name}': name,
+      '{Bonus Amount}': formatBonusAmount(payableBonus),
+      '{Personal Bonus}': personalBonus.toStringAsFixed(2),
+      '{Referral Bonus}': referralBonus.toStringAsFixed(2),
+      '{Carried Balance}': carriedBalance.toStringAsFixed(2),
+      '{Week}': week,
+    };
+    var out = template;
+    values.forEach((key, value) => out = out.replaceAll(key, value));
+    return out;
+  }
+
   /// `https://wa.me/<digits>?text=<url-encoded message>`. Spaces become
   /// `%20` (not `+`), which WhatsApp reads as a space on both mobile and web.
   static Uri build({required String number, required String message}) {

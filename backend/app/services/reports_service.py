@@ -111,8 +111,8 @@ def get_report(db: Client, owner_id: str, report_id: str) -> Optional[dict]:
 
 
 def list_reports(db: Client, owner_id: str) -> List[dict]:
-    """All of this admin's reports, newest upload first."""
-    return fetch_all(
+    """All of this admin's reports, latest period first (see report_sort_key)."""
+    rows = fetch_all(
         lambda a, b: db.table("reports")
         .select("*")
         .eq("owner_id", owner_id)
@@ -121,11 +121,23 @@ def list_reports(db: Client, owner_id: str) -> List[dict]:
         .range(a, b)
         .execute()
     )
+    return sorted(rows, key=report_sort_key, reverse=True)
+
+
+def report_sort_key(row: dict) -> Tuple[str, str]:
+    """Chronological position of a report: its period start (a week the admin
+    chose) or, for legacy reports without a period, the upload date. Carry-
+    forward follows this order, NOT upload order, so weeks can be imported
+    out of sequence without breaking balances."""
+    uploaded = row.get("uploaded_at") or ""
+    return (str(row.get("period_start") or uploaded[:10]), uploaded)
 
 
 def to_report_summary(row: dict) -> ReportSummary:
     return ReportSummary(
         report_id=row["id"],
+        period_start=row.get("period_start"),
+        period_end=row.get("period_end"),
         file_name=row.get("file_name", ""),
         status=row.get("status", ""),
         uploaded_at=row.get("uploaded_at"),
@@ -136,15 +148,37 @@ def to_report_summary(row: dict) -> ReportSummary:
     )
 
 
-def create_report(db: Client, owner_id: str, file_name: str) -> dict:
+def create_report(
+    db: Client,
+    owner_id: str,
+    file_name: str,
+    period_start: Optional[str] = None,
+    period_end: Optional[str] = None,
+) -> dict:
     """Inserts the initial reports row. file_path is filled in once the
     file has actually been stored (see update_report_file_path)."""
-    res = (
-        db.table("reports")
-        .insert({"owner_id": owner_id, "file_name": file_name, "file_path": "", "status": "uploaded"})
-        .execute()
-    )
-    return res.data[0]
+    row = {"owner_id": owner_id, "file_name": file_name, "file_path": "", "status": "uploaded"}
+    if period_start and period_end:
+        row["period_start"] = period_start
+        row["period_end"] = period_end
+    return db.table("reports").insert(row).execute().data[0]
+
+
+def find_period_conflicts(
+    db: Client, owner_id: str, period_start: str, period_end: str
+) -> Tuple[Optional[dict], Optional[dict]]:
+    """(identical-period report, other overlapping report) for this admin."""
+    same: Optional[dict] = None
+    overlap: Optional[dict] = None
+    for r in list_reports(db, owner_id):
+        start, end = r.get("period_start"), r.get("period_end")
+        if not (start and end):
+            continue
+        if start == period_start and end == period_end:
+            same = r
+        elif start <= period_end and end >= period_start:
+            overlap = overlap or r
+    return same, overlap
 
 
 def update_report_file_path(db: Client, owner_id: str, report_id: str, file_path: str) -> None:
@@ -160,27 +194,21 @@ def update_report_summary(db: Client, owner_id: str, report_id: str, fields: dic
 
 
 def first_later_completed_report(db: Client, owner_id: str, report: dict) -> Optional[dict]:
-    """The oldest report uploaded AFTER this one that has already been
-    calculated, or None.
+    """The earliest report chronologically AFTER this one (by period, see
+    report_sort_key) that has already been calculated, or None.
 
     Carry-forward balances flow from one period to the next, so recalculating,
     reopening or deleting an older report once a newer one is calculated would
     leave the newer report's "previous balance" stale. Callers block that case.
     """
-    uploaded_at = report.get("uploaded_at")
-    if not uploaded_at:
-        return None
-    res = (
-        db.table("reports")
-        .select("id, file_name, uploaded_at")
-        .eq("owner_id", owner_id)
-        .eq("status", "completed")
-        .gt("uploaded_at", uploaded_at)
-        .order("uploaded_at")
-        .limit(1)
-        .execute()
-    )
-    return res.data[0] if res.data else None
+    mine = report_sort_key(report)
+    later = [
+        r
+        for r in list_reports(db, owner_id)
+        if r.get("status") == "completed" and r["id"] != report["id"] and report_sort_key(r) > mine
+    ]
+    later.sort(key=report_sort_key)
+    return later[0] if later else None
 
 
 def later_report_is_completed(db: Client, owner_id: str, report: dict) -> bool:

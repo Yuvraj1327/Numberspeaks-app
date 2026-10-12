@@ -34,6 +34,9 @@ class UploadReportResponse(BaseModel):
     report_id: str
     file_name: str
     status: str
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    replaced_report_id: Optional[str] = None
     pages_processed: int
     total_records: int
     records: List[ExtractedRecord]
@@ -49,6 +52,8 @@ class ReportSummary(BaseModel):
     report_id: str
     file_name: str
     status: str
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
     uploaded_at: Optional[str] = None
     calculated_at: Optional[str] = None
     user_count: Optional[int] = None

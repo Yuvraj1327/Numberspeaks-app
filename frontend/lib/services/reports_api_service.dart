@@ -33,12 +33,20 @@ class ReportsApiService {
   Future<UploadReportResponse> uploadReport({
     required List<int> fileBytes,
     required String fileName,
+    String? periodStart,
+    String? periodEnd,
+    bool replace = false,
     void Function(double progress)? onProgress,
   }) async {
     final json = await _client.uploadPdf(
       '/reports/upload',
       fileBytes: fileBytes,
       fileName: fileName,
+      fields: {
+        if (periodStart != null) 'period_start': periodStart,
+        if (periodEnd != null) 'period_end': periodEnd,
+        if (replace) 'replace': 'true',
+      },
       onProgress: onProgress,
     );
     return UploadReportResponse.fromJson(json);

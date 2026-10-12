@@ -14,10 +14,18 @@ class SettingsApiService {
   }
 
   /// PUT /api/v1/settings — rates are fractions (0.03 = 3%).
-  Future<BonusSettings> save({required double personalRate, required double referralRate}) async {
+  Future<BonusSettings> save({
+    required double personalRate,
+    required double referralRate,
+    String? whatsappTemplate,
+  }) async {
     final json = await _client.put(
       '/settings',
-      body: {'personal_rate': personalRate, 'referral_rate': referralRate},
+      body: {
+        'personal_rate': personalRate,
+        'referral_rate': referralRate,
+        if (whatsappTemplate != null) 'whatsapp_template': whatsappTemplate,
+      },
     );
     return BonusSettings.fromJson(json);
   }

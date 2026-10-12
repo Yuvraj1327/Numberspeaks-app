@@ -13,6 +13,7 @@ Future<void> confirmAndLogout(BuildContext context, AuthRepository auth) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
+      scrollable: true,
       title: const Text('Log out?'),
       content: const Text('You will need to sign in again to access your reports.'),
       actions: [

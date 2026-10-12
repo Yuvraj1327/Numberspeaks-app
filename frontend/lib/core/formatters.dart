@@ -42,6 +42,25 @@ class Formatters {
     return '$text%';
   }
 
+  /// YYYY-MM-DD, the format the backend expects for a period.
+  static String isoDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+
+  /// A week as `5–11 Oct 2026` (or `28 Sep – 4 Oct 2026` / across years).
+  /// Falls back to a dash for reports imported before periods existed.
+  static String periodLabel(String? start, String? end) {
+    final s = start == null ? null : DateTime.tryParse(start);
+    final e = end == null ? null : DateTime.tryParse(end);
+    if (s == null || e == null) return '—';
+    if (s.year != e.year) {
+      return '${DateFormat('d MMM y').format(s)} – ${DateFormat('d MMM y').format(e)}';
+    }
+    if (s.month != e.month) {
+      return '${DateFormat('d MMM').format(s)} – ${DateFormat('d MMM y').format(e)}';
+    }
+    if (s.day == e.day) return DateFormat('d MMM y').format(e);
+    return '${s.day}–${DateFormat('d MMM y').format(e)}';
+  }
+
   static String dateTime(DateTime? value) {
     if (value == null) return '—';
     return DateFormat.yMMMd().add_jm().format(value);

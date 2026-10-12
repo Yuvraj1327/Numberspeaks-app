@@ -19,6 +19,7 @@ class AppRoutes {
   static const String results = '/results';
   static const String userDetail = '/user-detail';
   static const String referrals = '/referrals';
+  static const String referralHub = '/referral-hub';
   static const String users = '/users';
   static const String rates = '/rates';
   static const String terms = '/terms';

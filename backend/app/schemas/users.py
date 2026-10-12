@@ -15,9 +15,12 @@ class UserProfile(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    """Only the WhatsApp number is edited here. An empty string clears it."""
+    """Fields the admin can edit. Only fields that are sent change.
+    An empty WhatsApp number clears it."""
 
     whatsapp_number: Optional[str] = None
+    name: Optional[str] = None
+    level: Optional[str] = None
 
 
 class HistoryEntry(BaseModel):

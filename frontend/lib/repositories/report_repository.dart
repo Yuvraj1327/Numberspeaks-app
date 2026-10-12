@@ -78,11 +78,17 @@ class ReportRepository extends ChangeNotifier {
   Future<UploadReportResponse> uploadReport({
     required List<int> fileBytes,
     required String fileName,
+    String? periodStart,
+    String? periodEnd,
+    bool replace = false,
     void Function(double progress)? onProgress,
   }) async {
     final response = await _reportsApi.uploadReport(
       fileBytes: fileBytes,
       fileName: fileName,
+      periodStart: periodStart,
+      periodEnd: periodEnd,
+      replace: replace,
       onProgress: onProgress,
     );
     _changed();
@@ -149,6 +155,71 @@ class ReportRepository extends ChangeNotifier {
     _changed();
   }
 
+  // --- Referral ledger & referrers -----------------------------------------
+
+  Future<List<ReferralEntry>> ledger() => _referralsApi.ledger();
+
+  Future<ReferralEntry> addLedgerEntry({
+    required String reportId,
+    required String referrerUserId,
+    required String referredUserId,
+    double? rate,
+    double? amount,
+    String? note,
+  }) async {
+    final entry = await _referralsApi.addToLedger(
+      reportId: reportId,
+      referrerUserId: referrerUserId,
+      referredUserId: referredUserId,
+      rate: rate,
+      amount: amount,
+      note: note,
+    );
+    _changed();
+    return entry;
+  }
+
+  Future<ReferralEntry> updateLedgerEntry(String entryId, Map<String, dynamic> changes) async {
+    final entry = await _referralsApi.updateLedgerEntry(entryId, changes);
+    _changed();
+    return entry;
+  }
+
+  Future<void> deleteLedgerEntry(String entryId) async {
+    await _referralsApi.deleteLedgerEntry(entryId);
+    _changed();
+  }
+
+  Future<List<Referrer>> referrers() => _referralsApi.referrers();
+
+  Future<Referrer> addReferrer(Map<String, dynamic> body) async {
+    final r = await _referralsApi.addReferrer(body);
+    _changed(structural: false);
+    return r;
+  }
+
+  Future<Referrer> updateReferrer(String id, Map<String, dynamic> changes) async {
+    final r = await _referralsApi.updateReferrer(id, changes);
+    _changed(structural: false);
+    return r;
+  }
+
+  Future<void> deleteReferrer(String id) async {
+    await _referralsApi.deleteReferrer(id);
+    _changed(structural: false);
+  }
+
+  // --- Export / backup ---------------------------------------------------------
+
+  /// The raw bytes of a CSV export or the JSON backup.
+  Future<List<int>> download(String path) => _referralsApi.download(path);
+
+  Future<Map<String, dynamic>> restoreBackup(Map<String, dynamic> backup) async {
+    final result = await _referralsApi.restore(backup);
+    _changed();
+    return result;
+  }
+
   // --- Users ------------------------------------------------------------
 
   Future<List<UserProfile>> listUsers({String? query}) => _usersApi.list(query: query);
@@ -156,6 +227,13 @@ class ReportRepository extends ChangeNotifier {
   Future<UserProfile> getUser(String userId) => _usersApi.get(userId);
 
   Future<UserHistory> getUserHistory(String userId) => _usersApi.history(userId);
+
+  /// Edits a user's name and/or level (only the keys given).
+  Future<UserProfile> updateUser(String userId, Map<String, dynamic> changes) async {
+    final user = await _usersApi.update(userId, changes);
+    _changed();
+    return user;
+  }
 
   /// Saves the WhatsApp number permanently (an empty string clears it).
   /// Throws an [ApiException] if it is not a valid number or could not be
@@ -173,8 +251,13 @@ class ReportRepository extends ChangeNotifier {
   Future<BonusSettings> saveSettings({
     required double personalRate,
     required double referralRate,
+    String? whatsappTemplate,
   }) async {
-    final settings = await _settingsApi.save(personalRate: personalRate, referralRate: referralRate);
+    final settings = await _settingsApi.save(
+      personalRate: personalRate,
+      referralRate: referralRate,
+      whatsappTemplate: whatsappTemplate,
+    );
     _changed();
     return settings;
   }

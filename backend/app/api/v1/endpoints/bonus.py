@@ -23,6 +23,7 @@ from app.api.deps import CurrentUser, assert_report_modifiable, get_current_user
 from app.schemas.bonus import BonusCalculationSummary, BonusResult
 from app.services.report_locks import report_busy_guard
 from app.services.bonus_service import run_bonus_calculation
+from app.services.referral_service import annotate_results
 from app.services.reports_service import (
     get_bonus_result_for_user,
     get_bonus_results_for_report,
@@ -104,7 +105,7 @@ def _calculate(db: Client, owner_id: str, report_id: str) -> BonusCalculationSum
         failed_count=len(errors),
         total_payable=total_payable,
         payable_user_count=payable_count,
-        results=results,
+        results=annotate_results(db, owner_id, report_id, results),
         errors=errors,
     )
 
@@ -121,7 +122,7 @@ def get_report_results(
 ) -> List[BonusResult]:
     get_report_or_404(db, current_user.id, report_id)
     rows = get_bonus_results_for_report(db, current_user.id, report_id)
-    return [to_bonus_result(row) for row in rows]
+    return annotate_results(db, current_user.id, report_id, [to_bonus_result(row) for row in rows])
 
 
 @router.get(
@@ -142,4 +143,4 @@ def get_user_result(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No bonus result found for user {user_id} on report {report_id}",
         )
-    return to_bonus_result(row)
+    return annotate_results(db, current_user.id, report_id, [to_bonus_result(row)])[0]

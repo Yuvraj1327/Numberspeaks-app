@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../core/api_exception.dart';
 import '../core/app_theme.dart';
+import '../core/responsive.dart';
 import '../core/formatters.dart';
 import '../models/bonus_result.dart';
 import '../repositories/report_repository.dart';
@@ -89,7 +90,7 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => _EditRowSheet(reportId: widget.reportId, row: row),
+      builder: (context) => EditRowSheet(reportId: widget.reportId, row: row),
     );
     if (updated == null || !mounted) return;
     setState(() {
@@ -130,6 +131,100 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
     );
   }
 
+  static const _tableMinWidth = 760.0;
+
+  Widget _rowCard(BonusResult r, int index) {
+    Widget stat(String label, String value, {Color? color}) => Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                    color: Colors.black45,
+                  )),
+              Text(value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.w700, color: color)),
+            ],
+          ),
+        );
+
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: () => _edit(r),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md, AppSpacing.sm + 4, AppSpacing.sm, AppSpacing.sm + 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text('${index + 1}', style: const TextStyle(color: Colors.black45)),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          r.userName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        if (r.hasReferrer)
+                          Text(
+                            'Referred by ${r.referrerName}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11.5, color: AppTheme.blue, fontWeight: FontWeight.w600),
+                          ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Correct this row',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    onPressed: () => _edit(r),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Row(
+                children: [
+                  stat('Casino Pts', Formatters.points(r.casinoPts)),
+                  stat('Sport Pts', Formatters.points(r.sportPts)),
+                  stat('Third Party', Formatters.points(r.thirdPartyPts)),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Row(
+                children: [
+                  stat('Profit / Loss', Formatters.points(r.profitLoss),
+                      color: r.profitLoss < 0 ? AppTheme.danger : null),
+                  stat('Level', r.level ?? '—'),
+                  stat('Ptype', r.ptype ?? '—'),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Row(children: [
+                stat('WhatsApp number', r.hasWhatsAppNumber ? r.whatsappNumber! : '—')
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBody(BuildContext context) {
     if (_loading) return const LoadingView();
     if (_errorMessage != null) return ErrorView(message: _errorMessage!, onRetry: _load);
@@ -138,153 +233,193 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
     }
 
     final visible = _visible;
+    // While the keyboard is up (search field / edit sheet) the page keeps only
+    // the search box and table; notes and the action bar return afterwards.
+    return LayoutBuilder(builder: (context, constraints) {
+      final keyboardOpen = constraints.maxHeight < Responsive.shortBodyHeight;
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
-          child: Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            decoration: BoxDecoration(
-              color: AppTheme.blue.withValues(alpha: 0.07),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.info_outline, size: 18, color: AppTheme.blue),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: Text(
-                    '${_rows.length} user(s) read from the PDF. Check the figures and tap a row '
-                    'to correct anything that was misread. Nothing is calculated until you confirm.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (widget.warnings.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(
-                color: AppTheme.warning.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${widget.warnings.length} warning(s) while reading the PDF',
-                    style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  for (final warning in widget.warnings.take(5))
-                    Text(warning, style: Theme.of(context).textTheme.bodySmall),
-                  if (widget.warnings.length > 5)
-                    Text(
-                      '…and ${widget.warnings.length - 5} more.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                ],
-              ),
-            ),
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
-          child: TextField(
-            decoration: const InputDecoration(
-              hintText: 'Search by User ID / Name',
-              prefixIcon: Icon(Icons.search),
-              isDense: true,
-            ),
-            onChanged: (value) => setState(() => _query = value),
-          ),
-        ),
-        Expanded(
-          child: visible.isEmpty
-              ? const EmptyView(message: 'No users match your search.', icon: Icons.search_off)
-              : GridTable(
-                  columns: _columns,
-                  itemCount: visible.length,
-                  rowHeight: 56,
-                  onRowTap: (index) => _edit(visible[index]),
-                  cellsBuilder: (context, index) {
-                    final r = visible[index];
-                    return [
-                      Text('${index + 1}', style: const TextStyle(color: Colors.black45)),
-                      Text(
-                        r.userName,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      Text(r.level ?? '—', overflow: TextOverflow.ellipsis),
-                      Text(Formatters.points(r.casinoPts)),
-                      Text(Formatters.points(r.sportPts)),
-                      Text(Formatters.points(r.thirdPartyPts)),
-                      Text(
-                        Formatters.points(r.profitLoss),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: r.profitLoss < 0 ? AppTheme.danger : null,
+      return Column(
+        children: [
+          // The notes above the table scroll on their own if the screen is short
+          // (small phone, large font) so the table and buttons always keep room.
+          if (!keyboardOpen)
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.28),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+                      child: Container(
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        decoration: BoxDecoration(
+                          color: AppTheme.blue.withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.info_outline, size: 18, color: AppTheme.blue),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                '${_rows.length} user(s) read from the PDF. Check the figures and tap a row '
+                                'to correct anything that was misread. Nothing is calculated until you confirm.',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      Text(r.ptype ?? '—', overflow: TextOverflow.ellipsis),
-                      Text(
-                        r.hasWhatsAppNumber ? r.whatsappNumber! : '—',
-                        overflow: TextOverflow.ellipsis,
+                    ),
+                    if (widget.warnings.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                            AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(AppSpacing.md),
+                          decoration: BoxDecoration(
+                            color: AppTheme.warning.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${widget.warnings.length} warning(s) while reading the PDF',
+                                style: const TextStyle(
+                                    color: AppTheme.warning, fontWeight: FontWeight.w700),
+                              ),
+                              const SizedBox(height: AppSpacing.xs),
+                              for (final warning in widget.warnings.take(5))
+                                Text(warning, style: Theme.of(context).textTheme.bodySmall),
+                              if (widget.warnings.length > 5)
+                                Text(
+                                  '…and ${widget.warnings.length - 5} more.',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
-                      IconButton(
-                        tooltip: 'Correct this row',
-                        icon: const Icon(Icons.edit_outlined, size: 20),
-                        onPressed: () => _edit(r),
-                      ),
-                    ];
-                  },
+                  ],
                 ),
-        ),
-        SafeArea(
-          top: false,
-          child: Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.navy.withValues(alpha: 0.08),
-                  blurRadius: 12,
-                  offset: const Offset(0, -3),
-                ),
-              ],
+              ),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _openReferrals,
-                    icon: const Icon(Icons.group_add_outlined),
-                    label: const Text('Referrals'),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton.icon(
-                    onPressed: _confirm,
-                    icon: const Icon(Icons.calculate_outlined),
-                    label: const Text('Confirm & Calculate'),
-                  ),
-                ),
-              ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+            child: TextField(
+              decoration: const InputDecoration(
+                hintText: 'Search by User ID / Name',
+                prefixIcon: Icon(Icons.search),
+                isDense: true,
+              ),
+              onChanged: (value) => setState(() => _query = value),
             ),
           ),
-        ),
-      ],
-    );
+          Expanded(
+            child: visible.isEmpty
+                ? const EmptyView(message: 'No users match your search.', icon: Icons.search_off)
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Ten columns need sideways scrolling on a phone, so below
+                      // this width each row is a card with the same fields.
+                      if (constraints.maxWidth < _tableMinWidth) {
+                        return ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(
+                            AppSpacing.md,
+                            0,
+                            AppSpacing.md,
+                            AppSpacing.md,
+                          ),
+                          itemCount: visible.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+                          itemBuilder: (context, index) => _rowCard(visible[index], index),
+                        );
+                      }
+                      return GridTable(
+                        columns: _columns,
+                        itemCount: visible.length,
+                        rowHeight: Responsive.rowHeight(context, 56),
+                        onRowTap: (index) => _edit(visible[index]),
+                        cellsBuilder: (context, index) {
+                          final r = visible[index];
+                          return [
+                            Text('${index + 1}', style: const TextStyle(color: Colors.black45)),
+                            Text(
+                              r.userName,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            Text(r.level ?? '—', overflow: TextOverflow.ellipsis),
+                            Text(Formatters.points(r.casinoPts)),
+                            Text(Formatters.points(r.sportPts)),
+                            Text(Formatters.points(r.thirdPartyPts)),
+                            Text(
+                              Formatters.points(r.profitLoss),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: r.profitLoss < 0 ? AppTheme.danger : null,
+                              ),
+                            ),
+                            Text(r.ptype ?? '—', overflow: TextOverflow.ellipsis),
+                            Text(
+                              r.hasWhatsAppNumber ? r.whatsappNumber! : '—',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            IconButton(
+                              tooltip: 'Correct this row',
+                              icon: const Icon(Icons.edit_outlined, size: 20),
+                              onPressed: () => _edit(r),
+                            ),
+                          ];
+                        },
+                      );
+                    },
+                  ),
+          ),
+          if (!keyboardOpen)
+            SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.navy.withValues(alpha: 0.08),
+                      blurRadius: 12,
+                      offset: const Offset(0, -3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _openReferrals,
+                        icon: const Icon(Icons.group_add_outlined),
+                        label: const Text('Referrals'),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton.icon(
+                        onPressed: _confirm,
+                        icon: const Icon(Icons.calculate_outlined),
+                        label: const Text('Confirm & Calculate'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
+    });
   }
 }
 
@@ -301,17 +436,17 @@ class _NumericField {
 /// Bottom sheet with the editable fields of one extracted row. Pops with the
 /// saved row, or null if cancelled. Only fields the admin actually changed
 /// are sent.
-class _EditRowSheet extends StatefulWidget {
+class EditRowSheet extends StatefulWidget {
   final String reportId;
   final BonusResult row;
 
-  const _EditRowSheet({required this.reportId, required this.row});
+  const EditRowSheet({super.key, required this.reportId, required this.row});
 
   @override
-  State<_EditRowSheet> createState() => _EditRowSheetState();
+  State<EditRowSheet> createState() => EditRowSheetState();
 }
 
-class _EditRowSheetState extends State<_EditRowSheet> {
+class EditRowSheetState extends State<EditRowSheet> {
   late final TextEditingController _name;
   late final TextEditingController _level;
   late final TextEditingController _casino;

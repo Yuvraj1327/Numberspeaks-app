@@ -43,6 +43,11 @@ class BonusResult {
 
   final String? createdAt;
 
+  /// Who referred this user in this period, and how many users they referred.
+  final String? referrerUserId;
+  final String? referrerName;
+  final int referredCount;
+
   const BonusResult({
     required this.bonusResultId,
     required this.reportId,
@@ -68,7 +73,12 @@ class BonusResult {
     required this.whatsappInitiatedAt,
     required this.whatsappInitiatedCount,
     required this.createdAt,
+    this.referrerUserId,
+    this.referrerName,
+    this.referredCount = 0,
   });
+
+  bool get hasReferrer => referrerName != null && referrerName!.isNotEmpty;
 
   bool get isCalculated => calculationStatus == 'calculated';
 
@@ -117,6 +127,9 @@ class BonusResult {
       whatsappInitiatedAt: whatsappInitiatedAt ?? this.whatsappInitiatedAt,
       whatsappInitiatedCount: whatsappInitiatedCount ?? this.whatsappInitiatedCount,
       createdAt: createdAt,
+      referrerUserId: referrerUserId,
+      referrerName: referrerName,
+      referredCount: referredCount,
     );
   }
 
@@ -146,6 +159,9 @@ class BonusResult {
       whatsappInitiatedAt: json['whatsapp_initiated_at'] as String?,
       whatsappInitiatedCount: toInt(json['whatsapp_initiated_count']),
       createdAt: json['created_at'] as String?,
+      referrerUserId: json['referrer_user_id'] as String?,
+      referrerName: json['referrer_name'] as String?,
+      referredCount: toInt(json['referred_count']),
     );
   }
 }

@@ -6,6 +6,8 @@ class UploadReportResponse {
   final String reportId;
   final String fileName;
   final String status;
+  final String? periodStart;
+  final String? periodEnd;
   final int pagesProcessed;
   final int totalRecords;
   final List<ExtractedRecord> records;
@@ -15,6 +17,8 @@ class UploadReportResponse {
     required this.reportId,
     required this.fileName,
     required this.status,
+    this.periodStart,
+    this.periodEnd,
     required this.pagesProcessed,
     required this.totalRecords,
     required this.records,
@@ -26,6 +30,8 @@ class UploadReportResponse {
       reportId: json['report_id'] as String? ?? '',
       fileName: json['file_name'] as String? ?? '',
       status: json['status'] as String? ?? '',
+      periodStart: json['period_start'] as String?,
+      periodEnd: json['period_end'] as String?,
       pagesProcessed: json['pages_processed'] as int? ?? 0,
       totalRecords: json['total_records'] as int? ?? 0,
       records: (json['records'] as List<dynamic>? ?? [])

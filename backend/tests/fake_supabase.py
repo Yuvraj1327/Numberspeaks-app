@@ -41,6 +41,7 @@ UNIQUES: Dict[str, List[Any]] = {
     "bonus_results": [(("report_id", "user_id"), None)],
     "referral_entries": [(("owner_id", "report_id", "referred_user_id"), None)],
     "bonus_settings": [(("owner_id",), None)],
+    "referrers": [(("owner_id", "user_id"), None)],
 }
 
 DEFAULTS: Dict[str, Dict[str, Any]] = {
@@ -54,6 +55,7 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
                       "carry_forward_balance": None, "calculated_at": None,
                       "whatsapp_initiated_at": None, "whatsapp_initiated_count": 0},
     "referral_entries": {"amount": None, "adjustment": None, "calculated_at": None},
+    "referrers": {"display_name": None, "notes": None, "default_rate": None, "is_active": True},
     "calculation_history": {},
     "whatsapp_initiations": {},
     "bonus_settings": {},

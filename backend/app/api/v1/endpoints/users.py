@@ -20,7 +20,7 @@ from app.services.users_service import (
     list_users,
     previous_balances,
     to_profile,
-    update_whatsapp_number,
+    update_user,
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -53,14 +53,14 @@ def get_one_user(
     return to_profile(user, carry)
 
 
-@router.patch("/{user_id}", response_model=UserProfile, summary="Save or clear a user's WhatsApp number")
+@router.patch("/{user_id}", response_model=UserProfile, summary="Edit a user's name, level or WhatsApp number")
 def update_one_user(
     user_id: str,
     body: UserUpdate,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_db),
 ) -> UserProfile:
-    user = update_whatsapp_number(db, current_user.id, user_id, body.whatsapp_number)
+    user = update_user(db, current_user.id, user_id, body.model_dump(exclude_unset=True))
     return to_profile(user)
 
 

@@ -1,4 +1,4 @@
-import 'bonus_result.dart' show toDouble, toDoubleOrNull;
+import 'bonus_result.dart' show toDouble, toDoubleOrNull, toInt;
 
 /// Mirrors `ReferralEntry` (app/schemas/referral.py): the referrer, the
 /// referred user, the rate, and — once the report has been calculated — the
@@ -23,6 +23,12 @@ class ReferralEntry {
   final String? calculatedAt;
   final String? createdAt;
 
+  /// 'report' (the referred user's profit/loss from the PDF) or 'manual'.
+  final String amountSource;
+  final String? note;
+  final String? periodStart;
+  final String? periodEnd;
+
   const ReferralEntry({
     required this.entryId,
     required this.reportId,
@@ -35,7 +41,13 @@ class ReferralEntry {
     required this.adjustment,
     required this.calculatedAt,
     required this.createdAt,
+    this.amountSource = 'report',
+    this.note,
+    this.periodStart,
+    this.periodEnd,
   });
+
+  bool get isManual => amountSource == 'manual';
 
   bool get isCalculated => adjustment != null;
 
@@ -52,6 +64,54 @@ class ReferralEntry {
       adjustment: toDoubleOrNull(json['adjustment']),
       calculatedAt: json['calculated_at'] as String?,
       createdAt: json['created_at'] as String?,
+      amountSource: json['amount_source'] as String? ?? 'report',
+      note: json['note'] as String?,
+      periodStart: json['period_start'] as String?,
+      periodEnd: json['period_end'] as String?,
+    );
+  }
+}
+
+/// Mirrors `Referrer` (app/schemas/referral.py): saved details of a user who
+/// refers others, with how many users and what total adjustment they brought.
+class Referrer {
+  final String referrerId;
+  final String userId;
+  final String? userName;
+  final String? displayName;
+  final String? notes;
+
+  /// Fraction (0.10 = 10%); null means "use the global referral rate".
+  final double? defaultRate;
+  final bool isActive;
+  final int referredCount;
+  final double totalAdjustment;
+
+  const Referrer({
+    required this.referrerId,
+    required this.userId,
+    required this.userName,
+    required this.displayName,
+    required this.notes,
+    required this.defaultRate,
+    required this.isActive,
+    required this.referredCount,
+    required this.totalAdjustment,
+  });
+
+  String get title => (displayName != null && displayName!.isNotEmpty) ? displayName! : (userName ?? userId);
+
+  factory Referrer.fromJson(Map<String, dynamic> json) {
+    return Referrer(
+      referrerId: json['referrer_id'] as String? ?? '',
+      userId: json['user_id'] as String? ?? '',
+      userName: json['user_name'] as String?,
+      displayName: json['display_name'] as String?,
+      notes: json['notes'] as String?,
+      defaultRate: toDoubleOrNull(json['default_rate']),
+      isActive: json['is_active'] as bool? ?? true,
+      referredCount: toInt(json['referred_count']),
+      totalAdjustment: toDouble(json['total_adjustment']),
     );
   }
 }

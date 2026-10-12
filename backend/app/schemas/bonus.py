@@ -66,6 +66,11 @@ class BonusResult(BaseModel):
     whatsapp_initiated_at: Optional[str] = None
     whatsapp_initiated_count: int = 0
 
+    # --- Referral link for this period (who referred this user / how many they referred)
+    referrer_user_id: Optional[str] = None
+    referrer_name: Optional[str] = None
+    referred_count: int = 0
+
     created_at: Optional[str] = None
 
 

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../core/api_exception.dart';
 import '../core/app_theme.dart';
 import '../core/formatters.dart';
+import '../core/whatsapp_link.dart';
 import '../repositories/report_repository.dart';
 import '../widgets/error_view.dart';
 import '../widgets/loading_view.dart';
@@ -21,6 +22,7 @@ class RatesScreen extends StatefulWidget {
 class _RatesScreenState extends State<RatesScreen> {
   final TextEditingController _personal = TextEditingController();
   final TextEditingController _referral = TextEditingController();
+  final TextEditingController _template = TextEditingController();
 
   bool _loading = true;
   bool _saving = false;
@@ -37,6 +39,7 @@ class _RatesScreenState extends State<RatesScreen> {
   void dispose() {
     _personal.dispose();
     _referral.dispose();
+    _template.dispose();
     super.dispose();
   }
 
@@ -56,6 +59,7 @@ class _RatesScreenState extends State<RatesScreen> {
       setState(() {
         _personal.text = _percentText(settings.personalPercent);
         _referral.text = _percentText(settings.referralPercent);
+        _template.text = settings.whatsappTemplate ?? WhatsAppLink.defaultTemplate;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -65,6 +69,29 @@ class _RatesScreenState extends State<RatesScreen> {
         _loading = false;
       });
     }
+  }
+
+  String _preview() => WhatsAppLink.render(
+        _template.text,
+        userId: 'user123',
+        name: 'Alex',
+        payableBonus: 300,
+        personalBonus: 300,
+        referralBonus: 0,
+        carriedBalance: 0,
+        week: '5–11 Oct 2026',
+      );
+
+  void _insertPlaceholder(String text) {
+    final sel = _template.selection;
+    final value = _template.text;
+    final start = sel.isValid ? sel.start : value.length;
+    final end = sel.isValid ? sel.end : value.length;
+    _template.value = TextEditingValue(
+      text: value.replaceRange(start, end, text),
+      selection: TextSelection.collapsed(offset: start + text.length),
+    );
+    setState(() {});
   }
 
   double? _fraction(String text) {
@@ -89,6 +116,7 @@ class _RatesScreenState extends State<RatesScreen> {
       await context.read<ReportRepository>().saveSettings(
             personalRate: personal,
             referralRate: referral,
+            whatsappTemplate: _template.text.trim() == WhatsAppLink.defaultTemplate ? '' : _template.text,
           );
       if (!mounted) return;
       setState(() => _saving = false);
@@ -168,6 +196,63 @@ class _RatesScreenState extends State<RatesScreen> {
                                       labelText: 'Referral rate',
                                       suffixText: '%',
                                     ),
+                                  ),
+                                  const SizedBox(height: AppSpacing.lg),
+                                  Text('WhatsApp message', style: Theme.of(context).textTheme.titleSmall),
+                                  const SizedBox(height: AppSpacing.xs),
+                                  Text(
+                                    'Used for every "Send WhatsApp" message. You can still edit a message '
+                                    'before opening WhatsApp. Placeholders:',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(color: Colors.black54),
+                                  ),
+                                  const SizedBox(height: AppSpacing.xs),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 0,
+                                    children: [
+                                      for (final entry in WhatsAppLink.placeholders.entries)
+                                        ActionChip(
+                                          label: Text(entry.key, style: const TextStyle(fontSize: 12)),
+                                          tooltip: entry.value,
+                                          visualDensity: VisualDensity.compact,
+                                          onPressed: _saving ? null : () => _insertPlaceholder(entry.key),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: AppSpacing.sm),
+                                  TextField(
+                                    controller: _template,
+                                    enabled: !_saving,
+                                    minLines: 3,
+                                    maxLines: 6,
+                                    maxLength: 1000,
+                                    onChanged: (_) => setState(() {}),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Message template',
+                                      alignLabelWithHint: true,
+                                    ),
+                                  ),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(AppSpacing.sm),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.success.withValues(alpha: 0.08),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      'Preview: ${_preview()}',
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: _saving
+                                        ? null
+                                        : () => setState(() => _template.text = WhatsAppLink.defaultTemplate),
+                                    icon: const Icon(Icons.restart_alt, size: 18),
+                                    label: const Text('Reset to default message'),
                                   ),
                                   if (_error != null) ...[
                                     const SizedBox(height: AppSpacing.sm),

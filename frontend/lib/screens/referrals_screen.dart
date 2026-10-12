@@ -96,6 +96,7 @@ class _ReferralsScreenState extends State<ReferralsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Remove referral?'),
         content: Text(
           '${entry.referredName ?? 'This user'} will no longer count towards '
@@ -438,6 +439,7 @@ class _AddReferralDialogState extends State<_AddReferralDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      scrollable: true,
       title: const Text('Add referral'),
       content: SizedBox(
         width: 420,

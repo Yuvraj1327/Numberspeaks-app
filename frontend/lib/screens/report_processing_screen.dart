@@ -431,12 +431,14 @@ class _StageRow extends StatelessWidget {
         children: [
           SizedBox(height: 24, width: 24, child: Center(child: icon)),
           const SizedBox(width: AppSpacing.md),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: state == _StageState.pending ? Colors.black45 : Colors.black87,
-                  fontWeight: state == _StageState.active ? FontWeight.w600 : FontWeight.normal,
-                ),
+          Expanded(
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: state == _StageState.pending ? Colors.black45 : Colors.black87,
+                    fontWeight: state == _StageState.active ? FontWeight.w600 : FontWeight.normal,
+                  ),
+            ),
           ),
         ],
       ),

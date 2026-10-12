@@ -32,6 +32,13 @@ class UsersApiService {
     return UserProfile.fromJson(json);
   }
 
+  /// PATCH /api/v1/users/{user_id} — edits only the keys given (name, level,
+  /// whatsapp_number).
+  Future<UserProfile> update(String userId, Map<String, dynamic> changes) async {
+    final json = await _client.patch('/users/$userId', body: changes);
+    return UserProfile.fromJson(json);
+  }
+
   /// GET /api/v1/users/{user_id}/history
   Future<UserHistory> history(String userId) async {
     final json = await _client.get('/users/$userId/history');
