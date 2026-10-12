@@ -1,0 +1,15 @@
+NUMBERSPEAKS FLUTTER APP - Complete Bonus Management (changes-only)
+
+1. Unzip over your Flutter project folder (same relative paths; overwrite).
+2. flutter pub get
+3. flutter analyze ; flutter test     (NOT run by the author - no Flutter SDK was available. Send back any output.)
+4. flutter run -d chrome (or a device)
+
+Retired files, now comment-only stubs (safe to delete by hand):
+  lib/services/supabase_report_store.dart
+  lib/services/local_report_store.dart
+  lib/services/activity_log_store.dart
+  lib/models/whatsapp_send_summary.dart
+  lib/widgets/whatsapp_send_field.dart
+  supabase/numberspeaks_results_schema.sql
+The app talks only to the FastAPI backend; deploy the backend update first.

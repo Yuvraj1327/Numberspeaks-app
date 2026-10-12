@@ -11,12 +11,12 @@ import 'repositories/report_repository.dart';
 import 'routing/app_router.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
-import 'services/activity_log_store.dart';
 import 'services/auth_service.dart';
 import 'services/bonus_api_service.dart';
-import 'services/local_report_store.dart';
+import 'services/referrals_api_service.dart';
 import 'services/reports_api_service.dart';
-import 'services/supabase_report_store.dart';
+import 'services/settings_api_service.dart';
+import 'services/users_api_service.dart';
 import 'services/whatsapp_api_service.dart';
 
 Future<void> main() async {
@@ -36,7 +36,7 @@ Future<void> main() async {
   if (AppConfig.isSupabaseConfigured) {
     await supa.Supabase.initialize(
       url: AppConfig.supabaseUrl,
-      anonKey: AppConfig.supabaseAnonKey,
+      publishableKey: AppConfig.supabaseAnonKey,
     );
   }
 
@@ -60,21 +60,14 @@ class NumberspeaksApp extends StatelessWidget {
           ),
         ),
         ChangeNotifierProvider<ReportRepository>(
-          create: (context) {
-            // Everything the report layer keeps on the device is tied to
-            // whoever is signed in at the moment it is used.
-            final auth = context.read<AuthRepository>();
-            String? currentUserId() => auth.userId;
-            return ReportRepository(
-              reportsApi: ReportsApiService(apiClient),
-              bonusApi: BonusApiService(apiClient),
-              whatsappApi: WhatsAppApiService(apiClient),
-              localStore: LocalReportStore(userId: currentUserId),
-              activityLog: ActivityLogStore(userId: currentUserId),
-              currentUserId: currentUserId,
-              supabaseStore: SupabaseReportStore(),
-            );
-          },
+          create: (_) => ReportRepository(
+            reportsApi: ReportsApiService(apiClient),
+            bonusApi: BonusApiService(apiClient),
+            referralsApi: ReferralsApiService(apiClient),
+            usersApi: UsersApiService(apiClient),
+            settingsApi: SettingsApiService(apiClient),
+            whatsappApi: WhatsAppApiService(apiClient),
+          ),
         ),
       ],
       child: MaterialApp(

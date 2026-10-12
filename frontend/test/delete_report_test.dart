@@ -9,42 +9,40 @@ import 'package:numberspeaks_app/core/api_client.dart';
 import 'package:numberspeaks_app/core/app_theme.dart';
 import 'package:numberspeaks_app/repositories/report_repository.dart';
 import 'package:numberspeaks_app/screens/reports_screen.dart';
-import 'package:numberspeaks_app/services/activity_log_store.dart';
 import 'package:numberspeaks_app/services/bonus_api_service.dart';
-import 'package:numberspeaks_app/services/local_report_store.dart';
+import 'package:numberspeaks_app/services/referrals_api_service.dart';
 import 'package:numberspeaks_app/services/reports_api_service.dart';
-import 'package:numberspeaks_app/services/supabase_report_store.dart';
+import 'package:numberspeaks_app/services/settings_api_service.dart';
+import 'package:numberspeaks_app/services/users_api_service.dart';
 import 'package:numberspeaks_app/services/whatsapp_api_service.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+// Report deletion was retired in the "Complete Bonus Management" update (the
+// backend has no DELETE /reports endpoint and the Reports tab has no delete
+// button). This file now covers the Reports tab's current behaviour: the
+// history comes from the backend, shows no delete control, and a failed load
+// can be retried.
 class _FakeBackend implements HttpClientAdapter {
   final reports = <Map<String, dynamic>>[
     {
       'report_id': 'r1',
       'file_name': 'bonus.pdf',
       'status': 'completed',
-      'total_records': 2,
-      'calculated_count': 2,
-      'failed_count': 0,
+      'user_count': 2,
       'uploaded_at': '2026-10-02T10:00:00+00:00',
-      'updated_at': '2026-10-02T10:00:05+00:00',
+      'calculated_at': '2026-10-02T10:00:05+00:00',
     },
   ];
-  int deleteStatus = 204;
-  final deleted = <String>[];
+  bool failing = false;
+  final methods = <String>[];
 
   @override
   Future<ResponseBody> fetch(RequestOptions o, Stream<Uint8List>? r, Future<void>? c) async {
-    if (o.method == 'DELETE') {
-      if (deleteStatus == 204) {
-        deleted.add(o.uri.pathSegments.last);
-        reports.removeWhere((e) => e['report_id'] == o.uri.pathSegments.last);
-        return ResponseBody.fromString('', 204);
-      }
+    methods.add(o.method);
+    if (failing) {
       return ResponseBody.fromString(
-        jsonEncode({'detail': 'This report is still being processed. Wait for it to finish, then delete it.'}),
-        deleteStatus,
+        jsonEncode({'detail': 'Something went wrong.'}),
+        500,
         headers: {Headers.contentTypeHeader: ['application/json']},
       );
     }
@@ -62,17 +60,15 @@ void main() {
 
   setUp(() {
     dotenv.testLoad(fileInput: '');
-    SharedPreferences.setMockInitialValues({});
     backend = _FakeBackend();
     final api = ApiClient(dio: Dio(BaseOptions(baseUrl: 'http://fake/api/v1'))..httpClientAdapter = backend);
     repo = ReportRepository(
       reportsApi: ReportsApiService(api),
       bonusApi: BonusApiService(api),
+      referralsApi: ReferralsApiService(api),
+      usersApi: UsersApiService(api),
+      settingsApi: SettingsApiService(api),
       whatsappApi: WhatsAppApiService(api),
-      localStore: LocalReportStore(userId: () => 'user-a'),
-      activityLog: ActivityLogStore(userId: () => 'user-a'),
-      currentUserId: () => 'user-a',
-      supabaseStore: SupabaseReportStore(),
     );
   });
 
@@ -84,38 +80,26 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('cancelling the confirmation keeps the report', (tester) async {
+  testWidgets('the Reports tab lists the backend reports', (tester) async {
     await pumpTab(tester);
-    await tester.tap(find.byTooltip('Delete report'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-
-    expect(backend.deleted, isEmpty);
     expect(find.text('bonus.pdf'), findsOneWidget);
   });
 
-  testWidgets('confirming deletes the report and removes it from the list', (tester) async {
+  testWidgets('reports cannot be deleted from the Reports tab', (tester) async {
     await pumpTab(tester);
-    await tester.tap(find.byTooltip('Delete report'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete'));
-    await tester.pumpAndSettle();
-
-    expect(backend.deleted, ['r1']);
-    expect(find.text('bonus.pdf'), findsNothing);
-    expect(find.text('Report deleted.'), findsOneWidget);
+    expect(find.byTooltip('Delete report'), findsNothing);
+    expect(backend.methods, everyElement('GET'));
   });
 
-  testWidgets('a report still processing shows the backend message and stays', (tester) async {
-    backend.deleteStatus = 409;
+  testWidgets('a failed load shows an error and "Try again" recovers', (tester) async {
+    backend.failing = true;
     await pumpTab(tester);
-    await tester.tap(find.byTooltip('Delete report'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete'));
-    await tester.pumpAndSettle();
+    expect(find.text('bonus.pdf'), findsNothing);
+    expect(find.text('Try again'), findsOneWidget);
 
-    expect(find.textContaining('still being processed'), findsOneWidget);
+    backend.failing = false;
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
     expect(find.text('bonus.pdf'), findsOneWidget);
   });
 }

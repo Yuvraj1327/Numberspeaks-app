@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../core/api_exception.dart';
@@ -8,28 +7,27 @@ import '../core/formatters.dart';
 import '../core/report_actions.dart';
 import '../models/bonus_result.dart';
 import '../models/report_status.dart';
+import '../models/report_summary.dart';
 import '../repositories/auth_repository.dart';
 import '../repositories/report_repository.dart';
 import '../routing/app_routes.dart';
-import '../services/activity_log_store.dart';
 import '../widgets/empty_view.dart';
 import '../widgets/error_view.dart';
 import '../widgets/loading_view.dart';
-import '../widgets/screen_header.dart';
 import '../widgets/status_pill.dart';
+import 'reports_screen.dart';
 
 /// Dashboard tab (embedded inside [MainShell] — no Scaffold/AppBar of its
 /// own, those are shared across every tab).
 ///
-/// Two kinds of data feed this screen, both real:
-///  - The device's own upload history ([LocalReportStore]) — how many
-///    reports this device has uploaded ("Total Reports") and its activity
-///    log ("Recent activity"). See README for why this is on-device only
-///    (no backend "list reports" endpoint).
-///  - The most recently touched report's actual results (a real
-///    `GET /results` call) — everything else (Users Processed, Total
-///    Loss, Total Bonus, WhatsApp Sent/Pending) is computed from that
-///    report's real rows, never invented or estimated.
+/// Everything here comes from the backend (Supabase, scoped to the logged-in
+/// admin), so it is the same on every device:
+///  - the report history ("Total Reports", the latest report, recent reports);
+///  - the most recently *calculated* report's real rows, for Total Loss,
+///    Total Payable and the WhatsApp counts. Nothing is estimated.
+///
+/// "WhatsApp Opened" counts users for whom the admin opened WhatsApp with
+/// the message pre-filled. It does not mean the message was sent or delivered.
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
 
@@ -41,82 +39,61 @@ class _DashboardTabState extends State<DashboardTab> {
   bool _loading = true;
   String? _errorMessage;
 
-  String? _reportId;
-  String? _fileName;
-  String? _status;
+  List<ReportSummary> _reports = [];
+  ReportSummary? _calculated; // newest completed report
   List<BonusResult> _results = [];
-  int _totalReports = 0;
-  List<ActivityEntry> _activity = [];
-
-  late final ReportRepository _repo;
+  int _seenRevision = -1;
 
   @override
-  void initState() {
-    super.initState();
-    _repo = context.read<ReportRepository>()..addListener(_onRepoChanged);
-    _load();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final revision = context.watch<ReportRepository>().revision;
+    if (revision != _seenRevision) {
+      final first = _seenRevision == -1;
+      _seenRevision = revision;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load(silent: !first);
+      });
+    }
   }
 
-  @override
-  void dispose() {
-    _repo.removeListener(_onRepoChanged);
-    super.dispose();
-  }
-
-  /// A report finished or was uploaded elsewhere in the app: reload.
-  void _onRepoChanged() {
-    if (mounted) _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-    });
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _errorMessage = null;
+      });
+    }
 
     final repo = context.read<ReportRepository>();
     try {
-      // The newest report that the backend still has for this account. A
-      // report it says doesn't exist is dropped from the list by the
-      // repository, so the next pass moves on to the following one.
-      var reports = await repo.getRecentReports();
-      List<BonusResult> results = [];
-      while (reports.isNotEmpty) {
+      final reports = await repo.listReports();
+      final completed = reports.where((r) => r.isCompleted);
+      final calculated = completed.isEmpty ? null : completed.first;
+
+      var results = <BonusResult>[];
+      if (calculated != null) {
         try {
-          results = await repo.getResults(reports.first.reportId);
-          break;
-        } on ApiException catch (e) {
-          if (e.kind == ApiErrorKind.notFound) {
-            final before = reports.length;
-            reports = await repo.getRecentReports();
-            if (reports.length < before) continue; // the missing one was dropped
-          }
-          // The report may not have any results yet (e.g. upload
-          // succeeded but validation hasn't run) — that's not a
-          // dashboard-level error, just an empty summary.
+          results = await repo.getResults(calculated.reportId);
+        } on ApiException {
+          // The summary tiles simply stay empty; this is not a
+          // dashboard-level failure.
           results = [];
-          break;
         }
       }
-      final activity = await repo.getRecentActivity(limit: 5);
-      final reportId = reports.isEmpty ? null : reports.first.reportId;
-      final fileName = reports.isEmpty ? null : reports.first.fileName;
-      final status = reports.isEmpty ? null : reports.first.status;
 
       if (!mounted) return;
       setState(() {
-        _reportId = reportId;
-        _fileName = fileName;
-        _status = status;
+        _reports = reports;
+        _calculated = calculated;
         _results = results;
-        _totalReports = reports.length;
-        _activity = activity;
         _loading = false;
+        _errorMessage = null;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = e.userMessage;
+        if (!silent || _reports.isEmpty) _errorMessage = e.userMessage;
         _loading = false;
       });
     }
@@ -131,30 +108,37 @@ class _DashboardTabState extends State<DashboardTab> {
       return ErrorView(message: _errorMessage!, onRetry: _load);
     }
 
-    // --- Figures derived from the latest report's real results ----------
+    // --- Figures from the newest calculated report's real results -------
     final usersProcessed = _results.length;
     final totalLoss = _results
         .where((r) => r.profitLoss < 0)
         .fold<double>(0, (sum, r) => sum + r.profitLoss.abs());
-    final totalBonus = _results.fold<double>(0, (sum, r) => sum + (r.bonusAmount ?? 0));
-    final bonusEligible = _results.where((r) => r.bonusAmount != null).toList();
-    final whatsAppSent = bonusEligible.where((r) {
-      final status = _resolveWhatsAppStatus(context, r);
-      return status == 'sent' || status == 'skipped_already_sent';
-    }).length;
-    final whatsAppPending = bonusEligible.length - whatsAppSent;
+    final payableRows = _results.where((r) => r.hasPayableBonus).toList();
+    final totalPayable = payableRows.fold<double>(0, (sum, r) => sum + r.payable);
+    final opened = payableRows.where((r) => r.whatsappInitiated).length;
+    final notOpened = payableRows.length - opened;
+
+    final latest = _reports.isEmpty ? null : _reports.first;
+    final recent = _reports.skip(1).take(3).toList();
 
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.lg),
+        padding: const EdgeInsets.all(AppSpacing.md),
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          ScreenHeader(
-            eyebrow: 'Hello 👋',
-            title: _displayName(auth.userEmail),
+          Text(
+            'Welcome${auth.userEmail != null ? ', ${auth.userEmail}' : ''}',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            _calculated == null
+                ? 'Upload a report to calculate bonuses.'
+                : 'Figures below are from your latest calculated report: ${_calculated!.fileName}',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
+          ),
+          const SizedBox(height: AppSpacing.md),
 
           // --- Summary cards -------------------------------------------
           LayoutBuilder(
@@ -167,7 +151,7 @@ class _DashboardTabState extends State<DashboardTab> {
               final tiles = [
                 _SummaryTile(
                   label: 'Total Reports',
-                  value: '$_totalReports',
+                  value: '${_reports.length}',
                   icon: Icons.folder_copy_outlined,
                   color: AppTheme.navy,
                 ),
@@ -184,20 +168,20 @@ class _DashboardTabState extends State<DashboardTab> {
                   color: AppTheme.danger,
                 ),
                 _SummaryTile(
-                  label: 'Total Bonus',
-                  value: Formatters.amount(totalBonus),
+                  label: 'Total Payable',
+                  value: Formatters.rupees(totalPayable),
                   icon: Icons.savings_outlined,
                   color: AppTheme.teal,
                 ),
                 _SummaryTile(
-                  label: 'WhatsApp Sent',
-                  value: '$whatsAppSent',
+                  label: 'WhatsApp Opened',
+                  value: '$opened',
                   icon: Icons.chat_bubble_outline,
                   color: AppTheme.success,
                 ),
                 _SummaryTile(
                   label: 'WhatsApp Pending',
-                  value: '$whatsAppPending',
+                  value: '$notOpened',
                   icon: Icons.schedule_outlined,
                   color: AppTheme.warning,
                 ),
@@ -206,119 +190,81 @@ class _DashboardTabState extends State<DashboardTab> {
                 crossAxisCount: columns,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: AppSpacing.md,
-                crossAxisSpacing: AppSpacing.md,
-                childAspectRatio: 1.08,
+                mainAxisSpacing: AppSpacing.sm,
+                crossAxisSpacing: AppSpacing.sm,
+                childAspectRatio: 1.3,
                 children: tiles,
               );
             },
           ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: AppSpacing.md),
 
           // --- Quick Upload action -----------------------------------
-          const SectionTitle('Quick Actions'),
-          const SizedBox(height: AppSpacing.md),
           _QuickUploadCard(onTap: () => Navigator.of(context).pushNamed(AppRoutes.upload)),
           const SizedBox(height: AppSpacing.md),
 
-          if (_reportId == null)
-            Card(
+          if (latest == null)
+            const Card(
               child: Padding(
-                padding: const EdgeInsets.symmetric(
+                padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.md, vertical: AppSpacing.md + 4),
-                child: const EmptyView(
+                child: EmptyView(
                   icon: Icons.description_outlined,
-                  message: 'No report uploaded yet on this device.\nUpload a PDF report to get started.',
+                  message: 'No report uploaded yet.\nUpload a PDF report to get started.',
                 ),
               ),
             )
           else
-            // --- Latest report + current processing status ------------
+            // --- Latest report + what to do next ----------------------
             Card(
               child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.lg - 4),
+                padding: const EdgeInsets.all(AppSpacing.md),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('LATEST REPORT',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            fontWeight: FontWeight.w600, letterSpacing: 0.8)),
-                    const SizedBox(height: AppSpacing.sm + 2),
+                    Text('Latest report',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.black45)),
+                    const SizedBox(height: AppSpacing.xs),
                     Row(
                       children: [
-                        const IconBadge(icon: Icons.description_outlined, color: AppTheme.primary),
-                        const SizedBox(width: AppSpacing.md - 2),
+                        const Icon(Icons.description_outlined, color: AppTheme.primary),
+                        const SizedBox(width: AppSpacing.sm),
                         Expanded(
                           child: Text(
-                            _fileName?.isNotEmpty == true ? _fileName! : 'Latest report',
+                            latest.fileName.isNotEmpty ? latest.fileName : 'Latest report',
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium
-                                ?.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
+                                ?.copyWith(fontWeight: FontWeight.w600),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (_status != null)
-                          StatusPill.forReportStatus(ReportStatus.fromString(_status)),
+                        StatusPill.forReportStatus(ReportStatus.fromString(latest.status)),
                       ],
                     ),
                     const SizedBox(height: AppSpacing.md),
-                    _buildActionButton(context),
+                    _buildActionButton(context, latest),
                   ],
                 ),
               ),
             ),
 
-          const SizedBox(height: AppSpacing.md),
-          const SectionTitle('Recent activity'),
-          const SizedBox(height: AppSpacing.md),
-          if (_activity.isEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.md, vertical: AppSpacing.md + 4),
-                child: const EmptyView(
-                  icon: Icons.history,
-                  message: 'Actions you take — uploading, processing, calculating '
-                      'bonuses, sending WhatsApp messages — will show up here.',
-                ),
-              ),
-            )
-          else
-            Card(
-              child: Column(
-                children: [
-                  for (var i = 0; i < _activity.length; i++)
-                    _ActivityLogRow(
-                      entry: _activity[i],
-                      isLast: i == _activity.length - 1,
-                    ),
-                ],
-              ),
-            ),
+          if (recent.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.md),
+            Text('Recent reports', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: AppSpacing.sm),
+            for (final report in recent) ReportCard(report: report),
+          ],
           const SizedBox(height: AppSpacing.lg),
         ],
       ),
     );
   }
 
-  String _resolveWhatsAppStatus(BuildContext context, BonusResult result) {
-    final raw = context.read<ReportRepository>().sessionWhatsAppStatusFor(_reportId!, result.bonusResultId) ??
-        result.whatsappStatus;
-    return result.displayWhatsAppStatus(raw);
-  }
-
-  /// Friendly display name from the login email ("driver2@x.com" -> "driver2").
-  String _displayName(String? email) {
-    if (email == null || email.isEmpty) return 'Welcome';
-    final at = email.indexOf('@');
-    return at > 0 ? email.substring(0, at) : email;
-  }
-
-  Widget _buildActionButton(BuildContext context) {
-    final action = resolveNextAction(_status);
+  Widget _buildActionButton(BuildContext context, ReportSummary report) {
+    final action = resolveNextAction(report.status);
     return OutlinedButton.icon(
-      onPressed: () => Navigator.of(context).pushNamed(action.route, arguments: _reportId),
+      onPressed: () => Navigator.of(context).pushNamed(action.route, arguments: report.reportId),
       icon: Icon(action.icon),
       label: Text(action.label),
     );
@@ -332,15 +278,27 @@ class _QuickUploadCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return Material(
+      color: Colors.transparent,
       child: InkWell(
+        borderRadius: BorderRadius.circular(16),
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg - 4),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: AppTheme.navy,
+            borderRadius: BorderRadius.circular(16),
+          ),
           child: Row(
             children: [
-              const IconBadge(icon: Icons.upload_file_outlined, color: AppTheme.blue, size: 56),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.upload_file_outlined, color: AppTheme.cyan),
+              ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
@@ -348,18 +306,20 @@ class _QuickUploadCard extends StatelessWidget {
                   children: [
                     Text(
                       'Upload Report',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.navy),
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(color: Colors.white, fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'Upload a PDF report to calculate bonuses',
-                      style: Theme.of(context).textTheme.bodySmall,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.arrow_forward_rounded, color: AppTheme.blue, size: 26),
+              const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
             ],
           ),
         ),
@@ -387,113 +347,36 @@ class _SummaryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpacing.sm + 2),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            IconBadge(icon: icon, color: color, size: 42),
-            const Spacer(),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                value,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.navy,
-                    ),
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
               ),
+              child: Icon(icon, size: 16, color: color),
             ),
-            const SizedBox(height: 2),
+            const Spacer(),
+            Text(
+              value,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
+            ),
             Text(
               label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontSize: 13.5, fontWeight: FontWeight.w400),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
               overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-/// One row in the "Recent activity" feed — a real action this device took
-/// (see [ActivityLogStore]), not a per-user list.
-class _ActivityLogRow extends StatelessWidget {
-  final ActivityEntry entry;
-  final bool isLast;
-
-  const _ActivityLogRow({required this.entry, required this.isLast});
-
-  IconData get _icon {
-    switch (entry.type) {
-      case ActivityType.reportUploaded:
-        return Icons.upload_file_outlined;
-      case ActivityType.reportProcessed:
-        return Icons.fact_check_outlined;
-      case ActivityType.bonusCalculated:
-        return Icons.savings_outlined;
-      case ActivityType.whatsappSent:
-        return Icons.chat_bubble_outline;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final timeLabel = DateFormat.MMMd().add_jm().format(entry.timestamp);
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.md - 2),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              IconBadge(icon: _icon, color: AppTheme.primary, size: 40),
-              const SizedBox(width: AppSpacing.md - 2),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            entry.type.label,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                        Text(
-                          timeLabel,
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      ],
-                    ),
-                    if (entry.fileName != null && entry.fileName!.isNotEmpty)
-                      Text(
-                        entry.fileName!,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    if (entry.detail != null && entry.detail!.isNotEmpty)
-                      Text(
-                        entry.detail!,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (!isLast) const Divider(height: 1),
-      ],
     );
   }
 }

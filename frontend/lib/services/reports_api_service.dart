@@ -1,15 +1,29 @@
 import '../core/api_client.dart';
-import '../models/report_progress.dart';
+import '../models/bonus_result.dart';
+import '../models/report_summary.dart';
 import '../models/upload_report_response.dart';
 import '../models/validation_summary.dart';
 
-/// Talks to the /reports upload + validate endpoints (Steps 3-4 of the
-/// backend). One method per endpoint, no business logic — just request
-/// shaping and response parsing.
+/// Talks to the /reports endpoints: history, upload, review/correction and
+/// validation. One method per endpoint, no business logic — just request
+/// shaping and response parsing. Which admin's data is returned is decided
+/// by the backend from the login token, never by anything sent here.
 class ReportsApiService {
   ReportsApiService(this._client);
 
   final ApiClient _client;
+
+  /// GET /api/v1/reports — this admin's report history, newest first.
+  Future<List<ReportSummary>> listReports() async {
+    final list = await _client.getList('/reports');
+    return list.map((e) => ReportSummary.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// GET /api/v1/reports/{report_id}
+  Future<ReportSummary> getReport(String reportId) async {
+    final json = await _client.get('/reports/$reportId');
+    return ReportSummary.fromJson(json);
+  }
 
   /// POST /api/v1/reports/upload
   Future<UploadReportResponse> uploadReport({
@@ -26,20 +40,15 @@ class ReportsApiService {
     return UploadReportResponse.fromJson(json);
   }
 
-  /// GET /api/v1/reports — the signed-in account's own reports, newest first.
-  Future<List<Map<String, dynamic>>> listReports({int limit = 10}) async {
-    final list = await _client.getList('/reports?limit=$limit');
-    return list.whereType<Map<String, dynamic>>().toList();
-  }
-
-  /// DELETE /api/v1/reports/{report_id} — the report, its PDF and all results.
-  Future<void> deleteReport(String reportId) => _client.delete('/reports/$reportId');
-
-  /// GET /api/v1/reports/{report_id}/status — the background-processing
-  /// progress of an uploaded report.
-  Future<ReportProgress> getReportStatus(String reportId) async {
-    final json = await _client.get('/reports/$reportId/status');
-    return ReportProgress.fromJson(json);
+  /// PATCH /api/v1/reports/{report_id}/rows/{bonus_result_id} — corrects a
+  /// misread value. Only the keys present in [changes] are sent/changed.
+  Future<BonusResult> correctRow(
+    String reportId,
+    String bonusResultId,
+    Map<String, dynamic> changes,
+  ) async {
+    final json = await _client.patch('/reports/$reportId/rows/$bonusResultId', body: changes);
+    return BonusResult.fromJson(json);
   }
 
   /// POST /api/v1/reports/{report_id}/validate

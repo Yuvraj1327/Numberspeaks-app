@@ -1,143 +1,234 @@
 """
 Supabase persistence for uploaded reports and their extracted rows.
 
-Keeps every Supabase read/write for this feature in one place, on top of
-the shared client from app/db/supabase_client.py. The route handler in
-app/api/v1/endpoints/reports.py orchestrates these calls; it does not talk
-to Supabase directly.
+Keeps every Supabase read/write for reports and results in one place, on top
+of the shared client from app/db/supabase_client.py. Route handlers
+orchestrate these calls; they do not talk to Supabase directly.
+
+OWNERSHIP: every function takes `owner_id` (the verified admin's id from
+app/core/auth.py) and includes it in every query. The service-role client
+bypasses Row Level Security, so this filtering is what keeps one admin's
+reports/users/results invisible to another. A row that exists but belongs to
+someone else is indistinguishable from one that doesn't exist (callers get
+`None` / an empty list, which routes turn into 404).
 """
 
 import logging
-import traceback
-import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+import re
+from typing import Callable, Iterable, List, Optional, Tuple
+from uuid import UUID
 
 from supabase import Client
 
-from app.core.config import get_settings
 from app.schemas.bonus import BonusResult
-from app.schemas.report import ExtractedRecord
+from app.schemas.report import ExtractedRecord, ReportSummary
 
 logger = logging.getLogger("numberspeaks")
 
 REPORTS_BUCKET = "reports"
 
-# reports.status values that mean a worker is (supposed to be) running.
-ACTIVE_STATUSES = ("processing", "validating", "calculating")
-# A stale report is re-claimed at most this many times before it is failed,
-# so a report that crashes the worker can't be retried forever.
-MAX_PROCESSING_ATTEMPTS = 3
-
-# PostgREST returns at most this many rows per request (Supabase's default
-# max-rows), so larger result sets must be read page by page.
-READ_PAGE_SIZE = 1000
-# Names per `users.name IN (...)` lookup — keeps the request URL short.
-USER_LOOKUP_CHUNK = 100
+# PostgREST returns at most 1000 rows per request by default, so any list
+# that can exceed that (a report with many users) must be read page by page
+# or it would be silently truncated.
+PAGE_SIZE = 1000
+INSERT_CHUNK = 200
 
 
-def safe_error(exc: BaseException) -> str:
-    """
-    Short description of an exception that is safe to log: its type and
-    database error code only. The message itself is left out because
-    database errors can echo the offending row (phone numbers, amounts).
-    """
-    code = getattr(exc, "code", None)
-    return f"{type(exc).__name__}" + (f" (code {code})" if code else "")
+# --- small helpers ----------------------------------------------------------
 
 
-def safe_traceback(exc: BaseException) -> str:
-    """Stack frames of an exception without its message (see safe_error)."""
-    return "".join(traceback.format_tb(exc.__traceback__))
-
-
-def _chunks(items: List[Any], size: int) -> Iterable[List[Any]]:
-    for start in range(0, len(items), size):
-        yield items[start:start + size]
-
-
-def get_report(db: Client, report_id: str) -> Optional[dict]:
-    # reports.id is a uuid column: Postgres rejects any other text with an
-    # error, which callers would report as a database outage (503). An id
-    # that cannot exist is simply "no such report".
+def is_valid_uuid(value: object) -> bool:
+    """True for a well-formed UUID string. Used so a garbage id in a URL is a
+    clean 404 instead of a database 'invalid input syntax for type uuid'
+    error surfacing as a 503."""
     try:
-        uuid.UUID(report_id)
-    except ValueError:
+        UUID(str(value))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def fetch_all(build_page: Callable[[int, int], object]) -> List[dict]:
+    """Reads every row of a query by paging with .range(start, end).
+
+    `build_page(start, end)` must return an *executed* response for that
+    inclusive range and the query must have a stable order.
+    """
+    rows: List[dict] = []
+    start = 0
+    while True:
+        response = build_page(start, start + PAGE_SIZE - 1)
+        batch = response.data or []
+        rows.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            return rows
+        start += PAGE_SIZE
+
+
+def chunked(items: List, size: int) -> Iterable[List]:
+    for index in range(0, len(items), size):
+        yield items[index : index + size]
+
+
+def is_unique_violation(exc: Exception) -> bool:
+    """True if a Supabase/PostgREST error is a unique-constraint violation
+    (Postgres code 23505)."""
+    code = getattr(exc, "code", None)
+    text = str(exc).lower()
+    return code == "23505" or "23505" in text or "duplicate key" in text
+
+
+def _f(value: object) -> Optional[float]:
+    """numeric column -> float, keeping NULL as None."""
+    if value is None:
         return None
-    res = db.table("reports").select("*").eq("id", report_id).limit(1).execute()
+    return float(value)
+
+
+# --- reports ------------------------------------------------------------------
+
+
+def get_report(db: Client, owner_id: str, report_id: str) -> Optional[dict]:
+    if not is_valid_uuid(report_id):
+        return None
+    res = (
+        db.table("reports")
+        .select("*")
+        .eq("owner_id", owner_id)
+        .eq("id", report_id)
+        .limit(1)
+        .execute()
+    )
     return res.data[0] if res.data else None
 
 
-def list_reports(db: Client, owner_id: Optional[str], limit: int) -> List[dict]:
-    """Newest-first reports uploaded by `owner_id`; every account's when
-    `owner_id` is None (admin view)."""
-    query = db.table("reports").select(
-        "id, owner_id, file_name, status, total_records, calculated_count, failed_count, "
-        "uploaded_at, updated_at"
+def list_reports(db: Client, owner_id: str) -> List[dict]:
+    """All of this admin's reports, newest upload first."""
+    return fetch_all(
+        lambda a, b: db.table("reports")
+        .select("*")
+        .eq("owner_id", owner_id)
+        .order("uploaded_at", desc=True)
+        .order("id")
+        .range(a, b)
+        .execute()
     )
-    if owner_id is not None:
-        query = query.eq("owner_id", owner_id)
-    return query.order("uploaded_at", desc=True).limit(limit).execute().data
 
+
+def to_report_summary(row: dict) -> ReportSummary:
+    return ReportSummary(
+        report_id=row["id"],
+        file_name=row.get("file_name", ""),
+        status=row.get("status", ""),
+        uploaded_at=row.get("uploaded_at"),
+        calculated_at=row.get("calculated_at"),
+        user_count=row.get("user_count"),
+        payable_user_count=row.get("payable_user_count"),
+        total_payable=_f(row.get("total_payable")),
+    )
+
+
+def create_report(db: Client, owner_id: str, file_name: str) -> dict:
+    """Inserts the initial reports row. file_path is filled in once the
+    file has actually been stored (see update_report_file_path)."""
+    res = (
+        db.table("reports")
+        .insert({"owner_id": owner_id, "file_name": file_name, "file_path": "", "status": "uploaded"})
+        .execute()
+    )
+    return res.data[0]
+
+
+def update_report_file_path(db: Client, owner_id: str, report_id: str, file_path: str) -> None:
+    db.table("reports").update({"file_path": file_path}).eq("owner_id", owner_id).eq("id", report_id).execute()
+
+
+def update_report_status(db: Client, owner_id: str, report_id: str, status: str) -> None:
+    db.table("reports").update({"status": status}).eq("owner_id", owner_id).eq("id", report_id).execute()
+
+
+def update_report_summary(db: Client, owner_id: str, report_id: str, fields: dict) -> None:
+    db.table("reports").update(fields).eq("owner_id", owner_id).eq("id", report_id).execute()
+
+
+def later_report_is_completed(db: Client, owner_id: str, report: dict) -> bool:
+    """True if a report uploaded AFTER this one has already been calculated.
+
+    Carry-forward balances flow from one period to the next, so recalculating
+    or reopening an older report once a newer one is calculated would leave
+    the newer report's "previous balance" stale. Callers block that case.
+    """
+    uploaded_at = report.get("uploaded_at")
+    if not uploaded_at:
+        return False
+    res = (
+        db.table("reports")
+        .select("id")
+        .eq("owner_id", owner_id)
+        .eq("status", "completed")
+        .gt("uploaded_at", uploaded_at)
+        .limit(1)
+        .execute()
+    )
+    return bool(res.data)
+
+
+def upload_pdf_to_storage(db: Client, report_id: str, file_name: str, file_bytes: bytes) -> str:
+    """
+    Uploads the raw PDF to Supabase Storage and returns its storage path.
+    Requires a bucket named 'reports' to already exist (see
+    supabase/storage_setup.sql). The path starts with the report's own
+    (unguessable) uuid, and the bucket is private.
+    """
+    storage_path = f"{report_id}/{file_name}"
+    db.storage.from_(REPORTS_BUCKET).upload(
+        storage_path,
+        file_bytes,
+        {"content-type": "application/pdf"},
+    )
+    return storage_path
+
+
+# --- bonus_results ----------------------------------------------------------------
 
 BONUS_RESULT_SELECT = (
     "id, report_id, user_id, casino_pts, sport_pts, third_party_pts, "
     "profit_loss, ptype, bonus_amount, calculation_status, created_at, "
+    "personal_rate_used, personal_adjustment, referral_adjustment, "
+    "previous_balance, final_balance, payable_bonus, carry_forward_balance, "
+    "calculated_at, whatsapp_initiated_at, whatsapp_initiated_count, "
     "users(id, name, level, whatsapp_number)"
 )
 
 
-def _read_all_pages(build_query: Callable[[], Any]) -> List[dict]:
-    rows: List[dict] = []
-    start = 0
-    while True:
-        page = build_query().range(start, start + READ_PAGE_SIZE - 1).execute().data
-        rows.extend(page)
-        if len(page) < READ_PAGE_SIZE:
-            return rows
-        start += READ_PAGE_SIZE
-
-
-def get_bonus_results_for_report(
-    db: Client, report_id: str, include_whatsapp: bool = False
-) -> List[dict]:
+def get_bonus_results_for_report(db: Client, owner_id: str, report_id: str) -> List[dict]:
     """
-    Returns this report's extracted rows, each joined with its user's
-    name and level — i.e. exactly the data Step 3 saved, reassembled into
-    the same shape the PDF had. Reads every row regardless of report size
-    (one request per 1000 rows).
-
-    With `include_whatsapp=True` each row also carries its send attempts
-    under "whatsapp_messages", fetched in the same request (see
-    latest_whatsapp_status_of_row) instead of one lookup per row.
+    Returns this report's rows, each joined with its user's name, level and
+    WhatsApp number — exactly the data extraction saved (plus any later
+    corrections and calculation results), reassembled into the shape the
+    PDF had. Reads every page of results so a large report is never cut off.
     """
-    select = BONUS_RESULT_SELECT
-    if include_whatsapp:
-        select += ", whatsapp_messages(status, created_at)"
-
-    return _read_all_pages(
-        lambda: db.table("bonus_results")
-        .select(select)
+    if not is_valid_uuid(report_id):
+        return []
+    return fetch_all(
+        lambda a, b: db.table("bonus_results")
+        .select(BONUS_RESULT_SELECT)
+        .eq("owner_id", owner_id)
         .eq("report_id", report_id)
-        .order("created_at")
         .order("id")
+        .range(a, b)
+        .execute()
     )
 
 
-def latest_whatsapp_status_of_row(row: dict) -> Optional[str]:
-    """Status of the newest WhatsApp attempt embedded in a row fetched with
-    include_whatsapp=True, or None if no attempt has been made."""
-    messages = row.get("whatsapp_messages") or []
-    if not messages:
-        return None
-    return max(messages, key=lambda m: m.get("created_at") or "").get("status")
-
-
-def get_bonus_result_for_user(db: Client, report_id: str, user_id: str) -> Optional[dict]:
+def get_bonus_result_for_user(db: Client, owner_id: str, report_id: str, user_id: str) -> Optional[dict]:
     """A single user's bonus_results row within one report."""
+    if not (is_valid_uuid(report_id) and is_valid_uuid(user_id)):
+        return None
     res = (
         db.table("bonus_results")
         .select(BONUS_RESULT_SELECT)
+        .eq("owner_id", owner_id)
         .eq("report_id", report_id)
         .eq("user_id", user_id)
         .limit(1)
@@ -146,56 +237,30 @@ def get_bonus_result_for_user(db: Client, report_id: str, user_id: str) -> Optio
     return res.data[0] if res.data else None
 
 
-def _write_batches(
-    items: List[Any],
-    write_many: Callable[[List[Any]], None],
-    write_one: Callable[[Any], None],
-    heartbeat: Optional[Callable[[], None]] = None,
-) -> List[Any]:
-    """
-    Writes `items` in batches of DB_BATCH_SIZE, one request per batch.
-    If a batch is rejected, its items are retried one by one so a single bad
-    row costs only itself, not the batch. Returns the items that could not
-    be written.
-    """
-    failed: List[Any] = []
-    for chunk in _chunks(items, get_settings().DB_BATCH_SIZE):
-        try:
-            write_many(chunk)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Bulk write of %d rows failed (%s); retrying row by row",
-                len(chunk), safe_error(exc),
-            )
-            for item in chunk:
-                try:
-                    write_one(item)
-                except Exception as item_exc:  # noqa: BLE001
-                    logger.warning("Single-row write failed: %s", safe_error(item_exc))
-                    failed.append(item)
-        if heartbeat:
-            heartbeat()
-    return failed
+def get_bonus_result_by_id(db: Client, owner_id: str, report_id: str, bonus_result_id: str) -> Optional[dict]:
+    if not (is_valid_uuid(report_id) and is_valid_uuid(bonus_result_id)):
+        return None
+    res = (
+        db.table("bonus_results")
+        .select(BONUS_RESULT_SELECT)
+        .eq("owner_id", owner_id)
+        .eq("report_id", report_id)
+        .eq("id", bonus_result_id)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0] if res.data else None
 
 
-def bulk_update_bonus_results(
-    db: Client,
-    changes: List[dict],
-    heartbeat: Optional[Callable[[], None]] = None,
-) -> List[dict]:
+def update_calculation_status(db: Client, owner_id: str, bonus_result_id: str, status: str) -> None:
     """
-    Updates bonus_results rows in bulk. Each change is
-    {"id", "report_id", "user_id", "calculation_status"[, "bonus_amount"]};
-    all changes in one call must have the same keys. Implemented as an
-    upsert on the primary key — only the columns given are written, and
-    report_id/user_id are included solely because the insert half of an
-    upsert needs them (the rows always exist already, so it never inserts).
-    Returns the changes that could not be saved.
+    Marks a row's calculation_status directly, without touching its amounts —
+    used for rows that failed validation (status='invalid') so the failure
+    is saved durably instead of only reported in-memory.
     """
-    def write(chunk: List[dict]) -> None:
-        db.table("bonus_results").upsert(chunk, on_conflict="id").execute()
-
-    return _write_batches(changes, write, lambda item: write([item]), heartbeat)
+    db.table("bonus_results").update({"calculation_status": status}).eq("owner_id", owner_id).eq(
+        "id", bonus_result_id
+    ).execute()
 
 
 def bonus_result_row_to_raw(row: dict) -> dict:
@@ -221,41 +286,16 @@ def bonus_result_row_to_raw(row: dict) -> dict:
     }
 
 
-def get_latest_whatsapp_status(db: Client, bonus_result_id: str) -> Optional[str]:
-    """
-    The most recent WhatsApp send attempt's status for one bonus_results
-    row ('sent' or 'failed' — 'pending' rows are never left behind by
-    whatsapp_service.py), or None if no attempt has been made yet.
-    Powers the admin "WhatsApp Status" column (see to_bonus_result).
-    """
-    res = (
-        db.table("whatsapp_messages")
-        .select("status, created_at")
-        .eq("bonus_result_id", bonus_result_id)
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-    return res.data[0]["status"] if res.data else None
-
-
 def default_row_reference(raw: dict, index: int) -> str:
     name = raw.get("user_name") or "unknown user"
     record_id = raw.get("_bonus_result_id")
     return f"user={name!r}, bonus_result_id={record_id}" if record_id else f"row {index + 1}, user={name!r}"
 
 
-def to_bonus_result(row: dict, whatsapp_status: Optional[str] = None) -> BonusResult:
-    """
-    Converts one joined bonus_results+users row into the API schema.
-
-    `whatsapp_status` is passed in by the caller (rather than looked up
-    here) because callers differ: right after a fresh calculation no send
-    has happened yet, so it's correctly left as the default "not_sent";
-    the /results endpoints look it up per row via
-    get_latest_whatsapp_status() before calling this.
-    """
+def to_bonus_result(row: dict) -> BonusResult:
+    """Converts one joined bonus_results+users row into the API schema."""
     user = row.get("users") or {}
+    initiated_at = row.get("whatsapp_initiated_at")
     return BonusResult(
         bonus_result_id=row["id"],
         report_id=row["report_id"],
@@ -268,287 +308,189 @@ def to_bonus_result(row: dict, whatsapp_status: Optional[str] = None) -> BonusRe
         third_party_pts=row.get("third_party_pts", 0.0),
         profit_loss=row.get("profit_loss", 0.0),
         ptype=row.get("ptype"),
-        bonus_amount=row.get("bonus_amount"),
+        bonus_amount=_f(row.get("bonus_amount")),
         calculation_status=row.get("calculation_status") or "pending",
-        whatsapp_status=whatsapp_status or "not_sent",
+        personal_rate_used=_f(row.get("personal_rate_used")),
+        personal_adjustment=_f(row.get("personal_adjustment")),
+        referral_adjustment=_f(row.get("referral_adjustment")),
+        previous_balance=_f(row.get("previous_balance")),
+        final_balance=_f(row.get("final_balance")),
+        payable_bonus=_f(row.get("payable_bonus")),
+        carry_forward_balance=_f(row.get("carry_forward_balance")),
+        calculated_at=row.get("calculated_at"),
+        whatsapp_status="initiated" if initiated_at else "not_sent",
+        whatsapp_initiated_at=initiated_at,
+        whatsapp_initiated_count=row.get("whatsapp_initiated_count") or 0,
         created_at=row.get("created_at"),
     )
 
 
-def create_report(db: Client, report_id: str, file_name: str, file_path: str, owner_id: str) -> dict:
-    """Inserts the reports row (status 'uploaded') for a file that has
-    already been given its storage path. `owner_id` is the authenticated
-    account that uploaded it; every later access is checked against it."""
-    res = (
-        db.table("reports")
-        .insert({
-            "id": report_id,
-            "owner_id": owner_id,
-            "file_name": file_name,
-            "file_path": file_path,
-            "status": "uploaded",
-        })
-        .execute()
-    )
-    return res.data[0]
+# --- users (casino users, per admin) ---------------------------------------------
 
 
-def delete_report(db: Client, report: dict) -> None:
-    """
-    Permanently deletes a report: its PDF in storage, then the report row,
-    which cascades to its extracted rows, bonus results and WhatsApp send
-    history. People (the `users` rows) are kept — they may also appear in
-    the account's other reports. The file goes first: if it can't be
-    removed the row stays and the delete can simply be retried, instead of
-    leaving an unreachable file behind.
-    """
-    file_path = report.get("file_path")
-    if file_path:
-        db.storage.from_(REPORTS_BUCKET).remove([file_path])
-    db.table("reports").delete().eq("id", report["id"]).execute()
-
-
-def update_report_status(db: Client, report_id: str, status: str) -> None:
-    db.table("reports").update({"status": status}).eq("id", report_id).execute()
-
-
-def update_report(db: Client, report_id: str, **fields: Any) -> None:
-    db.table("reports").update(fields).eq("id", report_id).execute()
-
-
-def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def is_report_stale(report: dict) -> bool:
-    """True if the report is in a not-yet-final state but hasn't changed for
-    PROCESSING_STALE_SECONDS — its worker is presumed gone. Unknown or
-    missing timestamps count as not stale."""
-    if report.get("status") not in ("uploaded", *ACTIVE_STATUSES):
-        return False
-    updated_at = _parse_timestamp(report.get("updated_at"))
-    if updated_at is None:
-        return False
-    age = datetime.now(timezone.utc) - updated_at
-    return age > timedelta(seconds=get_settings().PROCESSING_STALE_SECONDS)
-
-
-def claim_report(db: Client, report_id: str) -> Optional[dict]:
-    """
-    Atomically takes ownership of a report for processing. Returns the
-    claimed report row to exactly one caller; everyone else (a duplicate
-    request, a second worker) gets None and must not process it.
-
-    A report is claimable when it is 'uploaded', or when it is in a
-    processing state but stale (its worker died). The claim is a
-    compare-and-swap on (status, attempts), so two callers racing on the
-    same report cannot both win.
-    """
-    report = get_report(db, report_id)
-    if report is None:
-        return None
-
-    status = report.get("status")
-    attempts = report.get("attempts") or 0
-
-    if status != "uploaded":
-        if status not in ACTIVE_STATUSES or not is_report_stale(report):
-            return None
-        if attempts >= MAX_PROCESSING_ATTEMPTS:
-            logger.error("Report %s abandoned after %d attempts; marking failed", report_id, attempts)
-            update_report(
-                db, report_id, status="failed",
-                error_message="Processing did not finish after several attempts. Please upload the report again.",
-            )
-            return None
-
-    res = (
-        db.table("reports")
-        .update({"status": "processing", "attempts": attempts + 1, "error_message": None})
-        .eq("id", report_id)
-        .eq("status", status)
-        .eq("attempts", attempts)
-        .execute()
-    )
-    return res.data[0] if res.data else None
-
-
-def upload_pdf_to_storage(db: Client, report_id: str, file_name: str, file_bytes: bytes) -> str:
-    """
-    Uploads the raw PDF to Supabase Storage and returns its storage path.
-    Requires a bucket named 'reports' to already exist (see
-    supabase/storage_setup.sql).
-    """
-    storage_path = storage_path_for(report_id, file_name)
-    db.storage.from_(REPORTS_BUCKET).upload(
-        storage_path,
-        file_bytes,
-        {"content-type": "application/pdf"},
-    )
-    return storage_path
-
-
-def storage_path_for(report_id: str, file_name: str) -> str:
-    return f"{report_id}/{file_name}"
-
-
-def download_pdf_from_storage(db: Client, file_path: str) -> bytes:
-    return db.storage.from_(REPORTS_BUCKET).download(file_path)
-
-
-def _in_filter_value(values: List[str]) -> str:
-    """PostgREST `in.(...)` value with every item double-quoted, so names
-    containing commas, parentheses, quotes or colons match exactly."""
-    quoted = ('"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"' for v in values)
-    return "(" + ",".join(quoted) + ")"
-
-
-def ensure_users(
+def get_or_create_user(
     db: Client,
-    first_record_by_name: Dict[str, ExtractedRecord],
-    owner_id: Optional[str] = None,
-    heartbeat: Optional[Callable[[], None]] = None,
-) -> Tuple[Dict[str, str], List[str]]:
+    owner_id: str,
+    name: str,
+    level: Optional[str] = None,
+    whatsapp_number: Optional[str] = None,
+) -> str:
     """
-    Bulk equivalent of "find the user by exact name, or create them".
+    Finds this admin's user by exact name, or creates one.
 
-    Matching by name (rather than generating a new user per report) keeps
-    the same person's bonus history linked across report uploads. Matching
-    is limited to users created by the same account (`owner_id`), so one
-    account's upload can never reuse, read or overwrite another account's
-    recipients (their level / WhatsApp number). When a match is found and the report shows a different level or WhatsApp
-    number, that field is updated to the report's latest value.
-
-    Costs one lookup per USER_LOOKUP_CHUNK names, one upsert per batch of
-    changed users, and one insert per batch of new users — not 2-3 requests
-    per user. Returns ({name: user_id}, warnings); names whose user could
-    not be created are absent from the map and explained in the warnings.
+    Matching by name keeps the same person's balance and history linked
+    across report uploads. A level from the report updates the stored level.
+    A WhatsApp number from the PDF only FILLS AN EMPTY number — it never
+    overwrites one the admin saved by hand.
     """
-    names = list(first_record_by_name)
-    existing: Dict[str, dict] = {}
-    for chunk in _chunks(names, USER_LOOKUP_CHUNK):
-        query = (
+    existing = (
+        db.table("users")
+        .select("id, level, whatsapp_number")
+        .eq("owner_id", owner_id)
+        .eq("name", name)
+        .limit(1)
+        .execute()
+    )
+
+    if existing.data:
+        user = existing.data[0]
+        updates = {}
+        if level and user.get("level") != level:
+            updates["level"] = level
+        if whatsapp_number and not user.get("whatsapp_number"):
+            updates["whatsapp_number"] = whatsapp_number
+        if updates:
+            db.table("users").update(updates).eq("owner_id", owner_id).eq("id", user["id"]).execute()
+        return user["id"]
+
+    try:
+        inserted = (
             db.table("users")
-            .select("id, name, level, whatsapp_number")
-            .filter("name", "in", _in_filter_value(chunk))
+            .insert({"owner_id": owner_id, "name": name, "level": level, "whatsapp_number": whatsapp_number})
+            .execute()
         )
-        # Reports without an owner (uploaded before ownership existed) keep
-        # using the users that likewise have no owner.
-        query = query.eq("owner_id", owner_id) if owner_id else query.filter("owner_id", "is", "null")
-        res = query.order("created_at").execute()
-        for user in res.data:
-            existing.setdefault(user["name"], user)  # oldest wins if names repeat
-        if heartbeat:
-            heartbeat()
-
-    user_ids: Dict[str, str] = {name: user["id"] for name, user in existing.items()}
-    warnings: List[str] = []
-
-    # Existing users whose level / WhatsApp number changed in this report.
-    changed: List[dict] = []
-    for name, user in existing.items():
-        record = first_record_by_name[name]
-        level = record.level if record.level and user.get("level") != record.level else user.get("level")
-        number = (
-            record.whatsapp_number
-            if record.whatsapp_number and user.get("whatsapp_number") != record.whatsapp_number
-            else user.get("whatsapp_number")
-        )
-        if level != user.get("level") or number != user.get("whatsapp_number"):
-            changed.append({"id": user["id"], "name": name, "level": level, "whatsapp_number": number})
-
-    def update_many(chunk: List[dict]) -> None:
-        db.table("users").upsert(chunk, on_conflict="id").execute()
-
-    for failed in _write_batches(changed, update_many, lambda item: update_many([item]), heartbeat):
-        warnings.append(f"Could not update level/WhatsApp number for '{failed['name']}'")
-
-    # New users.
-    to_create = [
-        {"name": name, "level": rec.level, "whatsapp_number": rec.whatsapp_number, "owner_id": owner_id}
-        for name, rec in first_record_by_name.items()
-        if name not in existing
-    ]
-
-    def insert_many(chunk: List[dict]) -> None:
-        for user in db.table("users").insert(chunk).execute().data:
-            user_ids[user["name"]] = user["id"]
-
-    for failed in _write_batches(to_create, insert_many, lambda item: insert_many([item]), heartbeat):
-        warnings.append(f"Could not create user '{failed['name']}'")
-
-    return user_ids, warnings
+        return inserted.data[0]["id"]
+    except Exception as exc:  # noqa: BLE001
+        if not is_unique_violation(exc):
+            raise
+        # Another request created the same user a moment ago — use theirs.
+        again = db.table("users").select("id").eq("owner_id", owner_id).eq("name", name).limit(1).execute()
+        if again.data:
+            return again.data[0]["id"]
+        raise
 
 
 def save_extracted_records(
-    db: Client,
-    report_id: str,
-    records: List[ExtractedRecord],
-    owner_id: Optional[str] = None,
-    heartbeat: Optional[Callable[[], None]] = None,
+    db: Client, owner_id: str, report_id: str, records: List[ExtractedRecord]
 ) -> Tuple[int, List[str]]:
     """
     Persists each extracted record as a bonus_results row, creating/reusing
-    users as needed (in bulk — see ensure_users). bonus_amount is left null;
-    calculation happens in its own stage.
+    this admin's users as needed. Done in bulk (a few requests per
+    ~200 rows rather than several per row) so a report with hundreds of
+    users stays well inside the app's upload timeout.
 
-    Returns (saved_count, warnings). A row that cannot be saved is recorded
-    as a warning and skipped rather than failing the whole report, since
-    the rest of the report may still be good data. Safe to run twice for
-    the same report: rows are upserted on (report_id, user_id).
+    Returns (saved_count, warnings). A single bad row is recorded as a
+    warning and skipped rather than failing the whole upload.
     """
     warnings: List[str] = []
 
-    # One row per user per report (a DB constraint): the first occurrence
-    # of a repeated name is kept, the rest are reported.
-    first_by_name: Dict[str, ExtractedRecord] = {}
+    # A user can appear only once per report (database rule). Keep the first
+    # occurrence and say so loudly rather than silently dropping the rest.
+    seen: dict = {}
+    unique: List[ExtractedRecord] = []
     for record in records:
-        if record.user_name in first_by_name:
+        if record.user_name in seen:
             warnings.append(
-                f"Could not save row for '{record.user_name}' (page {record.source_page}): "
-                "this user appears more than once in the report"
+                f"Duplicate user '{record.user_name}' (page {record.source_page}) skipped — "
+                "that user already appears earlier in this report."
             )
-        else:
-            first_by_name[record.user_name] = record
+            continue
+        seen[record.user_name] = record
+        unique.append(record)
 
-    user_ids, user_warnings = ensure_users(db, first_by_name, owner_id, heartbeat)
-    warnings.extend(user_warnings)
+    existing_rows = fetch_all(
+        lambda a, b: db.table("users")
+        .select("id, name, level, whatsapp_number")
+        .eq("owner_id", owner_id)
+        .order("id")
+        .range(a, b)
+        .execute()
+    )
+    users_by_name = {row["name"]: row for row in existing_rows}
+    preexisting = set(users_by_name)
 
-    # Explicit, strictly increasing created_at keeps the PDF's row order
-    # when the rows are read back (a batch insert would give them all the
-    # same timestamp).
-    base_time = datetime.now(timezone.utc)
-    rows: List[Tuple[ExtractedRecord, dict]] = []
-    for record in first_by_name.values():
-        user_id = user_ids.get(record.user_name)
-        if user_id is None:
-            continue  # the user failure was already reported above
-        rows.append((record, {
-            "report_id": report_id,
-            "user_id": user_id,
-            "casino_pts": record.casino_pts,
-            "sport_pts": record.sport_pts,
-            "third_party_pts": record.third_party_pts,
-            "profit_loss": record.profit_loss,
-            "ptype": record.ptype,
-            "created_at": (base_time + timedelta(microseconds=len(rows))).isoformat(),
-        }))
+    # --- create users we haven't seen before (bulk) --------------------------
+    to_create = [r for r in unique if r.user_name not in users_by_name]
+    for chunk in chunked(to_create, INSERT_CHUNK):
+        payload = [
+            {"owner_id": owner_id, "name": r.user_name, "level": r.level, "whatsapp_number": r.whatsapp_number}
+            for r in chunk
+        ]
+        try:
+            created = db.table("users").insert(payload).execute()
+            for row in created.data:
+                users_by_name[row["name"]] = row
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Bulk user insert failed (%s); retrying row by row", exc)
+            for r in chunk:
+                try:
+                    user_id = get_or_create_user(db, owner_id, r.user_name, r.level, r.whatsapp_number)
+                    users_by_name[r.user_name] = {"id": user_id, "name": r.user_name}
+                except Exception as row_exc:  # noqa: BLE001
+                    warnings.append(f"Could not save user '{r.user_name}' (page {r.source_page}): {row_exc}")
 
-    def save_many(chunk: List[Tuple[ExtractedRecord, dict]]) -> None:
-        db.table("bonus_results").upsert(
-            [payload for _, payload in chunk], on_conflict="report_id,user_id"
-        ).execute()
+    # --- refresh details of users that already existed -------------------------
+    for r in unique:
+        if r.user_name not in preexisting:
+            continue
+        user = users_by_name[r.user_name]
+        updates = {}
+        if r.level and user.get("level") != r.level:
+            updates["level"] = r.level
+        if r.whatsapp_number and not user.get("whatsapp_number"):
+            updates["whatsapp_number"] = r.whatsapp_number
+        if updates:
+            try:
+                db.table("users").update(updates).eq("owner_id", owner_id).eq("id", user["id"]).execute()
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"Could not update details for '{r.user_name}': {exc}")
 
-    failed = _write_batches(rows, save_many, lambda item: save_many([item]), heartbeat)
-    for record, _ in failed:
-        warnings.append(
-            f"Could not save row for '{record.user_name}' (page {record.source_page})"
+    # --- insert the report's rows (bulk) ----------------------------------------
+    rows = []
+    for r in unique:
+        user = users_by_name.get(r.user_name)
+        if not user:
+            continue  # its user could not be saved; a warning was already recorded
+        rows.append(
+            {
+                "owner_id": owner_id,
+                "report_id": report_id,
+                "user_id": user["id"],
+                "casino_pts": r.casino_pts,
+                "sport_pts": r.sport_pts,
+                "third_party_pts": r.third_party_pts,
+                "profit_loss": r.profit_loss,
+                "ptype": r.ptype,
+                "_name": r.user_name,
+                "_page": r.source_page,
+            }
         )
 
-    return len(rows) - len(failed), warnings
+    saved = 0
+    for chunk in chunked(rows, INSERT_CHUNK):
+        payload = [{k: v for k, v in row.items() if not k.startswith("_")} for row in chunk]
+        try:
+            db.table("bonus_results").insert(payload).execute()
+            saved += len(chunk)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Bulk result insert failed (%s); retrying row by row", exc)
+            for row, single in zip(chunk, payload):
+                try:
+                    db.table("bonus_results").insert(single).execute()
+                    saved += 1
+                except Exception as row_exc:  # noqa: BLE001
+                    warnings.append(
+                        f"Could not save row for '{row['_name']}' (page {row['_page']}): {row_exc}"
+                    )
+
+    return saved, warnings

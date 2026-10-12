@@ -1,0 +1,4 @@
+-- RETIRED. The Flutter app no longer reads or writes Supabase tables directly.
+-- All data goes through the FastAPI backend. The database schema now lives in
+-- the backend project: supabase/multi_tenant_bonus_schema.sql.
+-- This file is intentionally comment-only; it is safe to delete.

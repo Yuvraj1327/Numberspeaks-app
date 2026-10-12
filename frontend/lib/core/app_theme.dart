@@ -94,8 +94,8 @@ class AppTheme {
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         elevation: 12,
-        shadowColor: navy.withOpacity(0.25),
-        indicatorColor: blue.withOpacity(0.12),
+        shadowColor: navy.withValues(alpha: 0.25),
+        indicatorColor: blue.withValues(alpha: 0.12),
         indicatorShape: const StadiumBorder(),
         height: 72,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
@@ -166,7 +166,7 @@ class AppTheme {
         // Soft, wide, low-opacity shadow + hairline border: reads as a
         // clean floating card on the off-white page.
         elevation: 3,
-        shadowColor: navy.withOpacity(0.10),
+        shadowColor: navy.withValues(alpha: 0.10),
         color: Colors.white,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
@@ -214,7 +214,7 @@ class AppShadows {
   AppShadows._();
   static List<BoxShadow> soft = [
     BoxShadow(
-      color: AppTheme.navy.withOpacity(0.08),
+      color: AppTheme.navy.withValues(alpha: 0.08),
       blurRadius: 20,
       offset: const Offset(0, 8),
     ),

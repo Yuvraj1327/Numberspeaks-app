@@ -8,6 +8,8 @@ import '../routing/app_routes.dart';
 /// Settings tabs so there's exactly one logout flow, not two slightly
 /// different copies of the same dialog.
 Future<void> confirmAndLogout(BuildContext context, AuthRepository auth) async {
+  // Grab the navigator before any await — this context may be gone by then.
+  final navigator = Navigator.of(context, rootNavigator: true);
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -23,8 +25,6 @@ Future<void> confirmAndLogout(BuildContext context, AuthRepository auth) async {
     ),
   );
   if (confirmed == true) {
-    // Grab the navigator before the await — this context may be gone by then.
-    final navigator = Navigator.of(context, rootNavigator: true);
     await auth.logout();
     // Login does pushReplacementNamed(home), so the auth gate is no longer
     // in the route stack to react to the cleared session. Explicitly drop

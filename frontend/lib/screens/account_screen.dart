@@ -114,7 +114,7 @@ class AccountTab extends StatelessWidget {
           icon: const Icon(Icons.logout, color: AppTheme.danger),
           label: const Text('Log Out', style: TextStyle(color: AppTheme.danger)),
           style: OutlinedButton.styleFrom(
-            side: BorderSide(color: AppTheme.danger.withOpacity(0.5), width: 1.4),
+            side: BorderSide(color: AppTheme.danger.withValues(alpha: 0.5), width: 1.4),
           ),
         ),
       ],

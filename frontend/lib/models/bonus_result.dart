@@ -1,10 +1,17 @@
-/// Mirrors `BonusResult` (app/schemas/bonus.py) exactly. `bonusAmount` stays
-/// nullable end-to-end — the UI must treat null as "not calculated yet",
-/// never substitute or compute a value for it.
+/// Mirrors `BonusResult` (app/schemas/bonus.py) exactly.
+///
+/// The calculation fields are all null until the admin has confirmed the
+/// calculation — the UI treats null as "not calculated yet" and never
+/// substitutes or computes a value for it.
+///
+/// `payableBonus` is the amount actually owed (never negative). It is the
+/// same number the backend also returns as `bonus_amount`.
 class BonusResult {
   final String bonusResultId;
   final String reportId;
   final String userId;
+
+  /// The casino user's User ID / Name, as it appears in the report.
   final String userName;
   final String? whatsappNumber;
   final String? level;
@@ -13,16 +20,26 @@ class BonusResult {
   final double thirdPartyPts;
   final double profitLoss;
   final String? ptype;
-  final double? bonusAmount;
 
-  /// 'pending' (not yet calculated), 'calculated', or 'invalid' (row
-  /// failed validation and was never calculated). Defaults to 'pending'
-  /// if the backend ever omits it, matching the API's own default.
+  /// 'pending' (not yet calculated), 'calculated', or 'invalid' (row failed
+  /// validation and was not calculated).
   final String calculationStatus;
 
-  /// Latest WhatsApp send outcome for this user: 'not_sent', 'sent', or
-  /// 'failed'. Defaults to 'not_sent', matching the API's own default.
+  // --- Calculation breakdown (null until calculated) -------------------
+  final double? personalRateUsed;
+  final double? personalAdjustment;
+  final double? referralAdjustment;
+  final double? previousBalance;
+  final double? finalBalance;
+  final double? payableBonus;
+  final double? carryForwardBalance;
+  final String? calculatedAt;
+
+  /// 'not_sent' or 'initiated'. 'initiated' only means the admin opened
+  /// WhatsApp with the message pre-filled — it is never "sent"/"delivered".
   final String whatsappStatus;
+  final String? whatsappInitiatedAt;
+  final int whatsappInitiatedCount;
 
   final String? createdAt;
 
@@ -38,46 +55,67 @@ class BonusResult {
     required this.thirdPartyPts,
     required this.profitLoss,
     required this.ptype,
-    required this.bonusAmount,
     required this.calculationStatus,
+    required this.personalRateUsed,
+    required this.personalAdjustment,
+    required this.referralAdjustment,
+    required this.previousBalance,
+    required this.finalBalance,
+    required this.payableBonus,
+    required this.carryForwardBalance,
+    required this.calculatedAt,
     required this.whatsappStatus,
+    required this.whatsappInitiatedAt,
+    required this.whatsappInitiatedCount,
     required this.createdAt,
   });
 
-  /// Client-side display normalization only (never sent back to the
-  /// backend, never changes stored data): if this user has no WhatsApp
-  /// number on file at all, the status shown is always "No Number"
-  /// regardless of the raw status string, since no message could possibly
-  /// have been sent to them. Otherwise the raw status (backend value, or a
-  /// same-session send result) is shown as-is.
-  String displayWhatsAppStatus(String rawStatus) {
-    final hasNumber = whatsappNumber != null && whatsappNumber!.trim().isNotEmpty;
-    if (!hasNumber && rawStatus != 'sent' && rawStatus != 'failed') {
-      return 'skipped_no_number';
-    }
-    return rawStatus;
-  }
+  bool get isCalculated => calculationStatus == 'calculated';
 
-  /// A copy with just [whatsappNumber] overridden — used to merge in a
-  /// number the admin typed/saved (see SupabaseReportStore), or to reflect
-  /// a just-saved number locally without a round trip to the server.
-  /// Everything else is carried over unchanged.
-  BonusResult copyWith({String? whatsappNumber}) {
+  /// The bonus actually owed (0 when nothing is owed or not calculated yet).
+  double get payable => payableBonus ?? 0;
+
+  bool get hasPayableBonus => isCalculated && payable > 0;
+
+  bool get hasWhatsAppNumber => whatsappNumber != null && whatsappNumber!.trim().isNotEmpty;
+
+  bool get whatsappInitiated => whatsappStatus == 'initiated' || whatsappInitiatedCount > 0;
+
+  /// A copy with the fields the app changes locally after a successful save
+  /// (a new WhatsApp number, or a WhatsApp "opened" record). Everything else
+  /// is carried over unchanged. [clearWhatsAppNumber] sets the number to null
+  /// (a null [whatsappNumber] argument means "leave as is").
+  BonusResult copyWith({
+    String? whatsappNumber,
+    bool clearWhatsAppNumber = false,
+    String? whatsappStatus,
+    String? whatsappInitiatedAt,
+    int? whatsappInitiatedCount,
+  }) {
     return BonusResult(
       bonusResultId: bonusResultId,
       reportId: reportId,
       userId: userId,
       userName: userName,
-      whatsappNumber: whatsappNumber ?? this.whatsappNumber,
+      whatsappNumber: clearWhatsAppNumber ? null : (whatsappNumber ?? this.whatsappNumber),
       level: level,
       casinoPts: casinoPts,
       sportPts: sportPts,
       thirdPartyPts: thirdPartyPts,
       profitLoss: profitLoss,
       ptype: ptype,
-      bonusAmount: bonusAmount,
       calculationStatus: calculationStatus,
-      whatsappStatus: whatsappStatus,
+      personalRateUsed: personalRateUsed,
+      personalAdjustment: personalAdjustment,
+      referralAdjustment: referralAdjustment,
+      previousBalance: previousBalance,
+      finalBalance: finalBalance,
+      payableBonus: payableBonus,
+      carryForwardBalance: carryForwardBalance,
+      calculatedAt: calculatedAt,
+      whatsappStatus: whatsappStatus ?? this.whatsappStatus,
+      whatsappInitiatedAt: whatsappInitiatedAt ?? this.whatsappInitiatedAt,
+      whatsappInitiatedCount: whatsappInitiatedCount ?? this.whatsappInitiatedCount,
       createdAt: createdAt,
     );
   }
@@ -90,21 +128,43 @@ class BonusResult {
       userName: json['user_name'] as String? ?? '',
       whatsappNumber: json['whatsapp_number'] as String?,
       level: json['level'] as String?,
-      casinoPts: _toDouble(json['casino_pts']),
-      sportPts: _toDouble(json['sport_pts']),
-      thirdPartyPts: _toDouble(json['third_party_pts']),
-      profitLoss: _toDouble(json['profit_loss']),
+      casinoPts: toDouble(json['casino_pts']),
+      sportPts: toDouble(json['sport_pts']),
+      thirdPartyPts: toDouble(json['third_party_pts']),
+      profitLoss: toDouble(json['profit_loss']),
       ptype: json['ptype'] as String?,
-      bonusAmount: json['bonus_amount'] == null ? null : _toDouble(json['bonus_amount']),
       calculationStatus: json['calculation_status'] as String? ?? 'pending',
+      personalRateUsed: toDoubleOrNull(json['personal_rate_used']),
+      personalAdjustment: toDoubleOrNull(json['personal_adjustment']),
+      referralAdjustment: toDoubleOrNull(json['referral_adjustment']),
+      previousBalance: toDoubleOrNull(json['previous_balance']),
+      finalBalance: toDoubleOrNull(json['final_balance']),
+      payableBonus: toDoubleOrNull(json['payable_bonus']) ?? toDoubleOrNull(json['bonus_amount']),
+      carryForwardBalance: toDoubleOrNull(json['carry_forward_balance']),
+      calculatedAt: json['calculated_at'] as String?,
       whatsappStatus: json['whatsapp_status'] as String? ?? 'not_sent',
+      whatsappInitiatedAt: json['whatsapp_initiated_at'] as String?,
+      whatsappInitiatedCount: toInt(json['whatsapp_initiated_count']),
       createdAt: json['created_at'] as String?,
     );
   }
 }
 
-double _toDouble(dynamic value) {
+/// JSON numbers may arrive as int or double (or, defensively, a string).
+double toDouble(dynamic value) {
   if (value == null) return 0;
   if (value is num) return value.toDouble();
   return double.tryParse(value.toString()) ?? 0;
+}
+
+double? toDoubleOrNull(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString());
+}
+
+int toInt(dynamic value) {
+  if (value == null) return 0;
+  if (value is num) return value.toInt();
+  return int.tryParse(value.toString()) ?? 0;
 }

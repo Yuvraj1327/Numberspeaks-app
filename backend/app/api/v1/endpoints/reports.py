@@ -1,41 +1,45 @@
 """
-Report upload, status, and validation endpoints.
+Report upload, extraction, review/correction and validation endpoints.
 
-Upload is asynchronous: POST /reports/upload only checks that the file is
-a PDF, stores it, creates the report row and queues it for background
-processing (app/services/report_processor.py), then returns immediately
-with the report id. The client polls GET /reports/{id}/status until it is
-'completed' or 'failed', then reads GET /reports/{id}/results.
+Upload: accept the PDF, extract its table data into structured records,
+store the file and results. The admin can then REVIEW the extracted rows
+(GET /reports/{id}/results), CORRECT any misread value (PATCH
+/reports/{id}/rows/{row_id}), validate, and finally confirm the bonus
+calculation (see bonus.py). Nothing is calculated until the admin confirms.
 
-POST /reports/{id}/validate is the older manual step and is kept for
-compatibility; it refuses to run while the background job owns the report.
+Every endpoint requires a logged-in admin; every query is scoped to that
+admin (see app/core/auth.py and app/services/reports_service.py).
+
+Order of operations on upload is deliberate: the file is validated and
+extracted BEFORE anything touches Supabase, so a bad upload (wrong type,
+unreadable PDF) fails fast with a clear 4xx and never creates a database
+row.
 """
 
 import logging
-import uuid
+from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from supabase import Client
 
-from app.core.auth import AuthUser, can_access_report, get_current_user
-from app.core.config import get_settings
-from app.db.supabase_client import SupabaseNotConfiguredError, get_supabase
-from app.schemas.report import ReportListItem, ReportStatusResponse, UploadReportResponse
+from app.api.deps import CurrentUser, assert_report_modifiable, get_current_user, get_db, get_report_or_404
+from app.schemas.bonus import BonusResult, RowCorrection
+from app.schemas.report import ReportSummary, UploadReportResponse
 from app.schemas.validation import ValidationSummary
-from app.services.report_processor import resume_if_abandoned, submit_report
+from app.services.corrections_service import apply_row_correction
+from app.services.pdf_extractor import PdfExtractionError, extract_records_from_pdf
 from app.services.reports_service import (
-    ACTIVE_STATUSES,
-    REPORTS_BUCKET,
     bonus_result_row_to_raw,
     create_report,
     default_row_reference,
-    delete_report,
-    is_report_stale,
     get_bonus_results_for_report,
-    get_report,
     list_reports,
-    safe_error,
-    storage_path_for,
+    save_extracted_records,
+    to_bonus_result,
+    to_report_summary,
+    update_report_file_path,
     update_report_status,
+    update_report_summary,
     upload_pdf_to_storage,
 )
 from app.services.validation import validate_records
@@ -44,19 +48,34 @@ logger = logging.getLogger("numberspeaks")
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
-FINAL_STATUSES = ("completed", "failed")
+MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB.
 
 
-@router.post(
-    "/upload",
-    response_model=UploadReportResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload a report PDF and start processing it in the background",
-)
-def upload_report(
+@router.get("", response_model=List[ReportSummary], summary="List this admin's reports (history), newest first")
+async def list_my_reports(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_db),
+) -> List[ReportSummary]:
+    return [to_report_summary(row) for row in list_reports(db, current_user.id)]
+
+
+@router.get("/{report_id}", response_model=ReportSummary, summary="Get one report")
+async def get_one_report(
+    report_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_db),
+) -> ReportSummary:
+    return to_report_summary(get_report_or_404(db, current_user.id, report_id))
+
+
+@router.post("/upload", response_model=UploadReportResponse, summary="Upload and extract a report PDF")
+async def upload_report(
     file: UploadFile = File(..., description="The 'Party Profit Loss' PDF report"),
-    user: AuthUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_db),
 ) -> UploadReportResponse:
+    owner_id = current_user.id
+
     # --- 1. Validate the upload is a PDF -----------------------------------
     filename = file.filename or "upload.pdf"
     is_pdf_extension = filename.lower().endswith(".pdf")
@@ -68,160 +87,88 @@ def upload_report(
             detail="Only PDF files are accepted (expected a .pdf file with content-type application/pdf).",
         )
 
-    max_bytes = get_settings().MAX_UPLOAD_MB * 1024 * 1024
-    file_bytes = file.file.read(max_bytes + 1)
+    file_bytes = await file.read()
 
     if not file_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The uploaded file is empty.")
 
-    if len(file_bytes) > max_bytes:
+    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File too large. Maximum allowed size is {get_settings().MAX_UPLOAD_MB} MB.",
+            detail=f"File too large. Maximum allowed size is {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB.",
         )
 
-    if b"%PDF-" not in file_bytes[:1024]:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The file is not a valid PDF.")
-
-    # --- 2. Store the file, then register the report ------------------------
-    # The file goes first so a report row never exists without its PDF, and
-    # the background job can always fetch the PDF back from storage.
+    # --- 2. Extract table data from every page (no DB involved yet) ---------
     try:
-        db = get_supabase()
-    except SupabaseNotConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        extraction = extract_records_from_pdf(file_bytes)
+    except PdfExtractionError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected extraction failure for %s", filename)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected error while extracting the PDF.",
+        ) from exc
 
-    report_id = str(uuid.uuid4())
+    # --- 3. Create the report record, then store the file ----------------------
+    try:
+        report = create_report(db, owner_id, filename)
+        report_id = report["id"]
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to create report record")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not save the report to the database.",
+        ) from exc
 
     try:
         storage_path = upload_pdf_to_storage(db, report_id, filename, file_bytes)
+        update_report_file_path(db, owner_id, report_id, storage_path)
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to upload PDF to storage for report %s: %s", report_id, safe_error(exc))
+        logger.exception("Failed to upload PDF to storage for report %s", report_id)
+        update_report_status(db, owner_id, report_id, "failed")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
-                "The file could not be stored. Make sure the "
-                f"'{REPORTS_BUCKET}' Storage bucket exists (see supabase/storage_setup.sql)."
+                "The report was registered but the file could not be stored. Make sure the "
+                "'reports' Storage bucket exists (see supabase/storage_setup.sql)."
             ),
         ) from exc
 
-    try:
-        create_report(db, report_id, filename, storage_path, owner_id=user.id)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to create report record %s: %s", report_id, safe_error(exc))
-        try:
-            db.storage.from_(REPORTS_BUCKET).remove([storage_path_for(report_id, filename)])
-        except Exception:  # noqa: BLE001
-            logger.warning("Could not remove orphaned file for report %s", report_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not save report to the database.",
-        ) from exc
+    # --- 4. Save the extracted rows ---------------------------------------------
+    saved_count, save_warnings = save_extracted_records(db, owner_id, report_id, extraction.records)
 
-    # --- 3. Hand off to the background worker and return ---------------------
-    submit_report(report_id)
-    logger.info("Report %s accepted (%d bytes); processing queued", report_id, len(file_bytes))
+    # "processing" = extracted and stored, awaiting the admin's review.
+    update_report_status(db, owner_id, report_id, "processing")
+    update_report_summary(db, owner_id, report_id, {"user_count": saved_count})
 
     return UploadReportResponse(
         report_id=report_id,
         file_name=filename,
-        status="uploaded",
-        pages_processed=0,
-        total_records=0,
-        records=[],
-        warnings=[],
+        status="processing",
+        pages_processed=extraction.pages_processed,
+        total_records=saved_count,
+        records=extraction.records,
+        warnings=[*extraction.warnings, *save_warnings],
     )
 
 
-@router.get(
-    "",
-    response_model=list[ReportListItem],
-    summary="List the signed-in account's reports, newest first",
+@router.patch(
+    "/{report_id}/rows/{bonus_result_id}",
+    response_model=BonusResult,
+    summary="Correct a misread value in one extracted row (before confirming the calculation)",
 )
-def list_my_reports(
-    limit: int = Query(20, ge=1, le=100),
-    all_accounts: bool = Query(False, alias="all", description="Admins only: include every account's reports."),
-    user: AuthUser = Depends(get_current_user),
-) -> list[ReportListItem]:
-    if all_accounts and not user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can list every account's reports.")
-
-    try:
-        db = get_supabase()
-    except SupabaseNotConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-
-    try:
-        rows = list_reports(db, None if all_accounts else user.id, limit)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to list reports: %s", safe_error(exc))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not read reports from the database.",
-        ) from exc
-
-    return [
-        ReportListItem(
-            report_id=row["id"],
-            file_name=row.get("file_name") or "",
-            status=row["status"],
-            total_records=row.get("total_records") or 0,
-            calculated_count=row.get("calculated_count") or 0,
-            failed_count=row.get("failed_count") or 0,
-            uploaded_at=row.get("uploaded_at"),
-            updated_at=row.get("updated_at"),
-        )
-        for row in rows
-    ]
-
-
-@router.get(
-    "/{report_id}/status",
-    response_model=ReportStatusResponse,
-    summary="Get a report's processing status",
-)
-def get_report_status(report_id: str, user: AuthUser = Depends(get_current_user)) -> ReportStatusResponse:
-    try:
-        uuid.UUID(report_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
-
-    try:
-        db = get_supabase()
-    except SupabaseNotConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-
-    try:
-        report = get_report(db, report_id)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to look up report %s: %s", report_id, safe_error(exc))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not read report from the database.",
-        ) from exc
-
-    # Someone else's report is reported exactly like a missing one.
-    if report is None or not can_access_report(report, user):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
-
-    # A job that was lost to a restart is resumed here; the status returned
-    # below is the truthful current one either way.
-    resume_if_abandoned(report)
-
-    return ReportStatusResponse(
-        report_id=report["id"],
-        file_name=report.get("file_name") or "",
-        status=report["status"],
-        is_final=report["status"] in FINAL_STATUSES,
-        pages_processed=report.get("pages_processed") or 0,
-        total_records=report.get("total_records") or 0,
-        calculated_count=report.get("calculated_count") or 0,
-        failed_count=report.get("failed_count") or 0,
-        error_message=report.get("error_message"),
-        warnings=report.get("warnings") or [],
-        uploaded_at=report.get("uploaded_at"),
-        updated_at=report.get("updated_at"),
-    )
+async def correct_row(
+    report_id: str,
+    bonus_result_id: str,
+    correction: RowCorrection,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_db),
+) -> BonusResult:
+    report = get_report_or_404(db, current_user.id, report_id)
+    assert_report_modifiable(db, current_user.id, report)
+    row = apply_row_correction(db, current_user.id, report, bonus_result_id, correction)
+    return to_bonus_result(row)
 
 
 @router.post(
@@ -229,44 +176,19 @@ def get_report_status(report_id: str, user: AuthUser = Depends(get_current_user)
     response_model=ValidationSummary,
     summary="Validate a report's extracted rows before bonus calculation",
 )
-def validate_report(report_id: str, user: AuthUser = Depends(get_current_user)) -> ValidationSummary:
-    try:
-        db = get_supabase()
-    except SupabaseNotConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+async def validate_report(
+    report_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_db),
+) -> ValidationSummary:
+    owner_id = current_user.id
+    report = get_report_or_404(db, owner_id, report_id)
+    if report.get("status") == "completed":
+        # Validating a completed report reopens it, which is only safe while
+        # no newer report depends on its carry-forward balances.
+        assert_report_modifiable(db, owner_id, report)
 
-    try:
-        report = get_report(db, report_id)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to look up report %s", report_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Could not read report from the database: {exc}",
-        ) from exc
-
-    # Someone else's report is reported exactly like a missing one.
-    if report is None or not can_access_report(report, user):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
-
-    if report.get("status") in ("uploaded", *ACTIVE_STATUSES):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"This report is still being processed in the background "
-                f"(current status: {report.get('status')!r}). "
-                f"Check GET /api/v1/reports/{report_id}/status."
-            ),
-        )
-
-    try:
-        rows = get_bonus_results_for_report(db, report_id)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to load extracted rows for report %s", report_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Could not read this report's extracted rows: {exc}",
-        ) from exc
-
+    rows = get_bonus_results_for_report(db, owner_id, report_id)
     raw_rows = [bonus_result_row_to_raw(row) for row in rows]
     result = validate_records(raw_rows, default_row_reference)
 
@@ -275,7 +197,7 @@ def validate_report(report_id: str, user: AuthUser = Depends(get_current_user)) 
     else:
         new_status = "validated"
 
-    update_report_status(db, report_id, new_status)
+    update_report_status(db, owner_id, report_id, new_status)
 
     return ValidationSummary(
         report_id=report_id,
@@ -286,53 +208,3 @@ def validate_report(report_id: str, user: AuthUser = Depends(get_current_user)) 
         valid_records=result.valid_records,
         invalid_records=result.invalid_records,
     )
-
-
-@router.delete(
-    "/{report_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a report, its PDF and all of its results",
-)
-def delete_report_endpoint(report_id: str, user: AuthUser = Depends(get_current_user)) -> Response:
-    try:
-        uuid.UUID(report_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
-
-    try:
-        db = get_supabase()
-    except SupabaseNotConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-
-    try:
-        report = get_report(db, report_id)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to look up report %s: %s", report_id, safe_error(exc))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not read report from the database.",
-        ) from exc
-
-    # Someone else's report is reported exactly like a missing one.
-    if report is None or not can_access_report(report, user):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
-
-    # A report a worker is still processing can't be removed from under it;
-    # one whose worker died (stale) can.
-    if report.get("status") in ("uploaded", *ACTIVE_STATUSES) and not is_report_stale(report):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This report is still being processed. Wait for it to finish, then delete it.",
-        )
-
-    try:
-        delete_report(db, report)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to delete report %s: %s", report_id, safe_error(exc))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not delete the report. Please try again.",
-        ) from exc
-
-    logger.info("Report %s deleted", report_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

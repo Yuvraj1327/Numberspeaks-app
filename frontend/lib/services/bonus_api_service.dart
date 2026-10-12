@@ -2,9 +2,9 @@ import '../core/api_client.dart';
 import '../models/bonus_calculation_summary.dart';
 import '../models/bonus_result.dart';
 
-/// Talks to the /reports/{id}/calculate-bonus and /results endpoints
-/// (Steps 5-6 of the backend). The bonus formula itself never runs here —
-/// this only calls the backend and parses what it returns.
+/// Talks to the /reports/{id}/calculate-bonus and /results endpoints. The
+/// bonus rules never run here — this only calls the backend and parses what
+/// it returns.
 class BonusApiService {
   BonusApiService(this._client);
 

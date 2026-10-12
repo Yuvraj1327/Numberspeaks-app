@@ -12,25 +12,18 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from postgrest.exceptions import APIError
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 
 settings = get_settings()
 
-# Root stays at INFO so third-party libraries never emit DEBUG noise; only the
-# application logger honours the DEBUG setting.
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO if not settings.DEBUG else logging.DEBUG,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("numberspeaks")
-logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
-
-# PDF parsing libraries log every token/operator at DEBUG (and may include
-# document content), so keep them at WARNING regardless of settings.
-for _noisy in ("pdfminer", "pdfplumber", "PIL"):
-    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -58,11 +51,7 @@ app.include_router(api_router, prefix="/api/v1")
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Turns FastAPI's default validation error into a consistent shape."""
-    logger.warning(
-        "Validation error on %s: %s",
-        request.url.path,
-        [(e.get("loc"), e.get("msg")) for e in exc.errors()],
-    )
+    logger.warning("Validation error on %s: %s", request.url.path, exc.errors())
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
@@ -70,6 +59,17 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "error": "Validation error",
             "details": exc.errors(),
         },
+    )
+
+
+@app.exception_handler(APIError)
+async def database_error_handler(request: Request, exc: APIError):
+    """A failed Supabase/PostgREST call. The details go to the log only —
+    raw database error text is never sent to the client."""
+    logger.error("Database error on %s: %s", request.url.path, exc)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "The database request failed. Please try again."},
     )
 
 

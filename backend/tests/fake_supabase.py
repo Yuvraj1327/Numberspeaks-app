@@ -1,295 +1,281 @@
 """
-In-memory stand-in for the supabase-py client, for tests only.
+A small in-memory stand-in for the Supabase (PostgREST) client.
 
-It implements just the query-builder calls the app uses, and mimics the
-database behaviour the pipeline depends on: PostgREST's 1000-row cap per
-read, the unique (report_id, user_id) constraint, the reports.status check
-constraint, the updated_at trigger, and upsert-merges-only-given-columns.
-Every .execute() counts as one request, like one HTTP call to Supabase.
+It implements only the query-builder surface this backend uses —
+table().select/insert/update/upsert/delete with eq/neq/gt/lt/in_/ilike,
+order, range, limit, the embedded `users(...)` join, unique constraints and
+a fake storage bucket — so the real endpoints and services can be exercised
+end to end without a network or a Supabase project.
+
+It is NOT Postgres: it cannot prove SQL, RLS, or real PostgREST behaviour.
+It exists to test this app's own logic (ownership scoping, calculation,
+carry-forward, duplicate prevention, ...).
 """
 
-import re
-import threading
-import time
-import uuid
-from collections import Counter
-from datetime import datetime, timezone
-
-MAX_ROWS = 1000
-REPORT_STATUSES = {
-    "uploaded", "processing", "validating", "calculating", "validated", "completed", "failed",
-}
+import copy
+import itertools
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 
 class FakeAPIError(Exception):
-    def __init__(self, code, message="error"):
+    def __init__(self, message: str, code: str):
         super().__init__(message)
         self.code = code
 
 
-def _now():
-    return datetime.now(timezone.utc).isoformat()
+_BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_clock = itertools.count(1)
 
 
-class _Result:
-    def __init__(self, data):
-        self.data = data
+def _now() -> str:
+    return (_BASE + timedelta(seconds=next(_clock))).isoformat()
 
 
-class _Query:
-    def __init__(self, db, table):
-        self.db, self.table = db, table
-        self.op = "select"
-        self.payload = None
-        self.on_conflict = None
-        self.filters = []
-        self.orders = []
-        self.rng = None
-        self.lim = None
+# table -> list of unique column tuples; a (cols, partial_not_null_col) pair
+# means "unique only where that column is not null".
+UNIQUES: Dict[str, List[Any]] = {
+    "users": [(("owner_id", "name"), "owner_id")],
+    "bonus_results": [(("report_id", "user_id"), None)],
+    "referral_entries": [(("owner_id", "report_id", "referred_user_id"), None)],
+    "bonus_settings": [(("owner_id",), None)],
+}
+
+DEFAULTS: Dict[str, Dict[str, Any]] = {
+    "users": {"level": None, "whatsapp_number": None, "is_active": True, "owner_id": None},
+    "reports": {"status": "uploaded", "file_path": "", "user_count": None, "payable_user_count": None,
+                "total_payable": None, "calculated_at": None, "owner_id": None},
+    "bonus_results": {"casino_pts": 0, "sport_pts": 0, "third_party_pts": 0, "profit_loss": 0, "ptype": None,
+                      "bonus_amount": None, "calculation_status": "pending", "owner_id": None,
+                      "personal_rate_used": None, "personal_adjustment": None, "referral_adjustment": None,
+                      "previous_balance": None, "final_balance": None, "payable_bonus": None,
+                      "carry_forward_balance": None, "calculated_at": None,
+                      "whatsapp_initiated_at": None, "whatsapp_initiated_count": 0},
+    "referral_entries": {"amount": None, "adjustment": None, "calculated_at": None},
+    "calculation_history": {},
+    "whatsapp_initiations": {},
+    "bonus_settings": {},
+}
+
+PK = {"bonus_settings": "owner_id"}
+
+
+class FakeResponse(SimpleNamespace):
+    pass
+
+
+class FakeQuery:
+    def __init__(self, db: "FakeSupabase", table: str):
+        self.db = db
+        self.table_name = table
+        self.mode = "select"
+        self.payload: Any = None
+        self.on_conflict: Optional[str] = None
+        self.filters: List[Any] = []
+        self.orders: List[Any] = []
+        self.range_: Optional[tuple] = None
+        self.limit_: Optional[int] = None
         self.select_cols = "*"
 
-    # --- builders ---
-    def select(self, cols="*"):
-        self.op, self.select_cols = "select", cols
+    # --- builders -----------------------------------------------------------
+    def select(self, cols: str = "*", count: Optional[str] = None):
+        self.mode = "select"
+        self.select_cols = cols
         return self
 
     def insert(self, payload):
-        self.op, self.payload = "insert", payload
+        self.mode = "insert"
+        self.payload = payload
         return self
 
-    def upsert(self, payload, on_conflict="", **_):
-        self.op, self.payload, self.on_conflict = "upsert", payload, on_conflict
+    def update(self, values):
+        self.mode = "update"
+        self.payload = values
+        return self
+
+    def upsert(self, payload, on_conflict: Optional[str] = None):
+        self.mode = "upsert"
+        self.payload = payload
+        self.on_conflict = on_conflict
         return self
 
     def delete(self):
-        self.op = "delete"
-        return self
-
-    def update(self, payload):
-        self.op, self.payload = "update", payload
+        self.mode = "delete"
         return self
 
     def eq(self, col, val):
-        self.filters.append((col, "eq", val))
+        self.filters.append(lambda r, c=col, v=val: r.get(c) == v)
         return self
 
-    def filter(self, col, op, val):
-        self.filters.append((col, op, val))
+    def neq(self, col, val):
+        self.filters.append(lambda r, c=col, v=val: r.get(c) != v)
         return self
 
-    def order(self, col, desc=False):
+    def gt(self, col, val):
+        self.filters.append(lambda r, c=col, v=val: r.get(c) is not None and r.get(c) > v)
+        return self
+
+    def lt(self, col, val):
+        self.filters.append(lambda r, c=col, v=val: r.get(c) is not None and r.get(c) < v)
+        return self
+
+    def in_(self, col, values):
+        vals = set(values)
+        self.filters.append(lambda r, c=col: r.get(c) in vals)
+        return self
+
+    def ilike(self, col, pattern):
+        needle = pattern.strip("%").lower()
+        self.filters.append(lambda r, c=col: needle in str(r.get(c) or "").lower())
+        return self
+
+    def order(self, col, desc: bool = False):
         self.orders.append((col, desc))
         return self
 
-    def range(self, a, b):
-        self.rng = (a, b)
+    def range(self, start, end):
+        self.range_ = (start, end)
         return self
 
     def limit(self, n):
-        self.lim = n
+        self.limit_ = n
         return self
 
-    # --- execution ---
-    def execute(self):
-        return self.db._execute(self)
+    # --- execution ---------------------------------------------------------
+    def _rows(self) -> List[dict]:
+        return self.db.tables.setdefault(self.table_name, [])
 
+    def _matching(self) -> List[dict]:
+        rows = [r for r in self._rows() if all(f(r) for f in self.filters)]
+        for col, desc in reversed(self.orders):
+            rows.sort(key=lambda r, c=col: ("" if r.get(c) is None else r.get(c)), reverse=desc)
+        if self.range_ is not None:
+            a, b = self.range_
+            rows = rows[a : b + 1]
+        if self.limit_ is not None:
+            rows = rows[: self.limit_]
+        return rows
 
-def _parse_in(value):
-    inner = value[1:-1]
-    items, cur, quoted, esc = [], "", False, False
-    for ch in inner:
-        if esc:
-            cur += ch
-            esc = False
-        elif quoted and ch == "\\":
-            esc = True
-        elif ch == '"':
-            quoted = not quoted
-        elif ch == "," and not quoted:
-            items.append(cur)
-            cur = ""
-        else:
-            cur += ch
-    items.append(cur)
-    return items
-
-
-class FakeSupabase:
-    def __init__(self, latency=0.0):
-        self.tables = {"users": [], "reports": [], "bonus_results": [], "whatsapp_messages": []}
-        self.files = {}
-        self.requests = Counter()
-        self.latency = latency
-        self.lock = threading.RLock()
-        self.status_history = {}  # report_id -> ordered distinct statuses
-        self.fail_next = []  # (table, op) pairs to fail once
-
-    # supabase-py surface
-    def table(self, name):
-        return _Query(self, name)
-
-    @property
-    def storage(self):
-        return _Storage(self)
-
-    # helpers
-    def _match(self, row, filters):
-        for col, op, val in filters:
-            if op == "eq":
-                if str(row.get(col)) != str(val):
-                    return False
-            elif op == "in":
-                if str(row.get(col)) not in _parse_in(val):
-                    return False
-            elif op == "is":
-                if val != "null" or row.get(col) is not None:
-                    return False
-            else:
-                raise NotImplementedError(op)
-        return True
-
-    def _check_report(self, row):
-        if row.get("status") not in REPORT_STATUSES:
-            raise FakeAPIError("23514", "reports_status_check violated")
-        rec = self.status_history.setdefault(row["id"], [])
-        if not rec or rec[-1] != row["status"]:
-            rec.append(row["status"])
-
-    def _project(self, table, row, cols):
-        out = dict(row)
-        if table == "bonus_results":
-            if "users(" in cols:
-                user = next((u for u in self.tables["users"] if u["id"] == row["user_id"]), None)
-                out["users"] = (
-                    {k: user[k] for k in ("id", "name", "level", "whatsapp_number")} if user else None
-                )
-            if "whatsapp_messages(" in cols:
-                out["whatsapp_messages"] = [
-                    {"status": m["status"], "created_at": m["created_at"]}
-                    for m in self.tables["whatsapp_messages"]
-                    if m["bonus_result_id"] == row["id"]
-                ]
-        return out
-
-    def _execute(self, q):
-        if self.latency:
-            time.sleep(self.latency)
-        with self.lock:
-            self.requests[(q.table, q.op)] += 1
-            key = (q.table, q.op)
-            if key in self.fail_next:
-                self.fail_next.remove(key)
-                raise FakeAPIError("XX000", "injected failure")
-            rows = self.tables[q.table]
-
-            if q.op == "select":
-                found = [r for r in rows if self._match(r, q.filters)]
-                for col, desc in reversed(q.orders):
-                    found.sort(key=lambda r: str(r.get(col)), reverse=desc)
-                if q.rng:
-                    found = found[q.rng[0]: q.rng[1] + 1]
-                cap = min(MAX_ROWS, q.lim) if q.lim else MAX_ROWS
-                return _Result([self._project(q.table, r, q.select_cols) for r in found[:cap]])
-
-            if q.op == "insert":
-                items = q.payload if isinstance(q.payload, list) else [q.payload]
-                created = [self._insert_one(q.table, dict(i)) for i in items]
-                return _Result([dict(c) for c in created])
-
-            if q.op == "upsert":
-                items = q.payload if isinstance(q.payload, list) else [q.payload]
-                keys = [c.strip() for c in q.on_conflict.split(",")]
-                out = []
-                for item in items:
-                    existing = next(
-                        (r for r in rows if all(r.get(k) == item.get(k) for k in keys)), None
+    def _check_unique(self, candidate: dict, ignore: Optional[dict] = None) -> None:
+        for cols, partial in UNIQUES.get(self.table_name, []):
+            if partial and candidate.get(partial) is None:
+                continue
+            key = tuple(candidate.get(c) for c in cols)
+            for existing in self._rows():
+                if existing is ignore:
+                    continue
+                if tuple(existing.get(c) for c in cols) == key:
+                    raise FakeAPIError(
+                        f'duplicate key value violates unique constraint on {self.table_name}{cols}', "23505"
                     )
-                    if existing:
-                        existing.update(item)  # only the given columns
-                        if q.table == "reports":
-                            existing["updated_at"] = _now()
-                        out.append(dict(existing))
-                    else:
-                        out.append(dict(self._insert_one(q.table, dict(item))))
-                return _Result(out)
 
-            if q.op == "delete":
-                hit = [r for r in rows if self._match(r, q.filters)]
-                for r in hit:
-                    rows.remove(r)
-                    if q.table == "reports":  # ON DELETE CASCADE
-                        gone = {b["id"] for b in self.tables["bonus_results"] if b["report_id"] == r["id"]}
-                        self.tables["bonus_results"] = [
-                            b for b in self.tables["bonus_results"] if b["id"] not in gone]
-                        self.tables["whatsapp_messages"] = [
-                            m for m in self.tables["whatsapp_messages"] if m["bonus_result_id"] not in gone]
-                return _Result([dict(r) for r in hit])
-
-            if q.op == "update":
-                hit = [r for r in rows if self._match(r, q.filters)]
-                for r in hit:
-                    r.update(q.payload)
-                    if q.table == "reports":
-                        r["updated_at"] = _now()
-                        self._check_report(r)
-                return _Result([dict(r) for r in hit])
-
-    def _insert_one(self, table, row):
-        rows = self.tables[table]
-        row.setdefault("id", str(uuid.uuid4()))
-        row.setdefault("created_at", _now())
-        if table == "reports":
-            row.setdefault("status", "uploaded")
-            row.setdefault("attempts", 0)
-            row.setdefault("pages_processed", 0)
-            row.setdefault("total_records", 0)
-            row.setdefault("calculated_count", 0)
-            row.setdefault("failed_count", 0)
-            row.setdefault("warnings", [])
-            row.setdefault("error_message", None)
-            row["uploaded_at"] = row["updated_at"] = _now()
-            self._check_report(row)
-        if table == "users":
-            row.setdefault("is_active", True)
-            if row.get("name") is None:
-                raise FakeAPIError("23502", "null name")
-        if table == "bonus_results":
-            for col in ("report_id", "user_id"):
-                if row.get(col) is None:
-                    raise FakeAPIError("23502", f"null {col}")
-            for col in ("casino_pts", "sport_pts", "third_party_pts", "profit_loss"):
-                row.setdefault(col, 0)
-            row.setdefault("bonus_amount", None)
-            row.setdefault("calculation_status", "pending")
-            if any(r["report_id"] == row["report_id"] and r["user_id"] == row["user_id"] for r in rows):
-                raise FakeAPIError("23505", "bonus_results_report_user_unique")
-        if any(r["id"] == row["id"] for r in rows):
-            raise FakeAPIError("23505", "pk")
-        rows.append(row)
+    def _new_row(self, values: dict) -> dict:
+        row = {"id": str(uuid4())}
+        row.update(copy.deepcopy(DEFAULTS.get(self.table_name, {})))
+        if self.table_name == "reports":
+            row["uploaded_at"] = _now()
+        else:
+            row["created_at"] = _now()
+        row.update(copy.deepcopy(values))
+        if self.table_name == "referral_entries" and row.get("referrer_user_id") == row.get("referred_user_id"):
+            raise FakeAPIError("check constraint referral_entries_not_self", "23514")
+        if self.table_name == "bonus_settings":
+            row.pop("id", None)
         return row
 
+    def _embed(self, row: dict) -> dict:
+        out = copy.deepcopy(row)
+        if "users(" in self.select_cols and "user_id" in row:
+            user = next((u for u in self.db.tables.get("users", []) if u["id"] == row["user_id"]), None)
+            out["users"] = copy.deepcopy(user) if user else None
+        return out
 
-class _Storage:
-    def __init__(self, db):
-        self.db = db
+    def execute(self) -> FakeResponse:
+        if self.db.fail_on and self.db.fail_on(self.table_name, self.mode):
+            raise FakeAPIError("simulated failure", "XX000")
 
-    def from_(self, bucket):
-        return _Bucket(self.db, bucket)
+        if self.mode == "select":
+            return FakeResponse(data=[self._embed(r) for r in self._matching()], count=None)
+
+        if self.mode == "insert":
+            items = self.payload if isinstance(self.payload, list) else [self.payload]
+            staged = []
+            # Postgres makes a multi-row insert atomic: all rows or none.
+            existing_snapshot = list(self._rows())
+            try:
+                for item in items:
+                    row = self._new_row(item)
+                    self._check_unique(row)
+                    self._rows().append(row)
+                    staged.append(row)
+            except FakeAPIError:
+                self.db.tables[self.table_name] = existing_snapshot
+                raise
+            return FakeResponse(data=[copy.deepcopy(r) for r in staged], count=None)
+
+        if self.mode == "update":
+            updated = []
+            for row in self._matching():
+                candidate = {**row, **copy.deepcopy(self.payload)}
+                self._check_unique(candidate, ignore=row)
+                row.update(copy.deepcopy(self.payload))
+                updated.append(copy.deepcopy(row))
+            return FakeResponse(data=updated, count=None)
+
+        if self.mode == "upsert":
+            items = self.payload if isinstance(self.payload, list) else [self.payload]
+            conflict_cols = [c.strip() for c in (self.on_conflict or PK.get(self.table_name, "id")).split(",")]
+            out = []
+            for item in items:
+                match = next(
+                    (r for r in self._rows() if all(r.get(c) == item.get(c) for c in conflict_cols)), None
+                )
+                if match:
+                    match.update(copy.deepcopy(item))
+                    out.append(copy.deepcopy(match))
+                else:
+                    row = self._new_row(item)
+                    self._check_unique(row)
+                    self._rows().append(row)
+                    out.append(copy.deepcopy(row))
+            return FakeResponse(data=out, count=None)
+
+        if self.mode == "delete":
+            doomed = self._matching()
+            self.db.tables[self.table_name] = [r for r in self._rows() if r not in doomed]
+            return FakeResponse(data=[copy.deepcopy(r) for r in doomed], count=None)
+
+        raise AssertionError(self.mode)
 
 
 class _Bucket:
-    def __init__(self, db, bucket):
-        self.db, self.bucket = db, bucket
+    def __init__(self, store: Dict[str, bytes], fail: bool):
+        self.store = store
+        self.fail = fail
 
-    def upload(self, path, data, _opts=None):
-        self.db.requests[("storage", "upload")] += 1
-        self.db.files[(self.bucket, path)] = bytes(data)
+    def upload(self, path, data, options=None):
+        if self.fail:
+            raise RuntimeError("bucket does not exist")
+        self.store[path] = data
 
-    def download(self, path):
-        self.db.requests[("storage", "download")] += 1
-        return self.db.files[(self.bucket, path)]
 
-    def remove(self, paths):
-        self.db.requests[("storage", "remove")] += 1
-        for p in paths:
-            self.db.files.pop((self.bucket, p), None)
+class _Storage:
+    def __init__(self, db: "FakeSupabase"):
+        self.db = db
+
+    def from_(self, bucket: str):
+        return _Bucket(self.db.files.setdefault(bucket, {}), self.db.storage_fails)
+
+
+class FakeSupabase:
+    def __init__(self):
+        self.tables: Dict[str, List[dict]] = {}
+        self.files: Dict[str, Dict[str, bytes]] = {}
+        self.storage_fails = False
+        self.fail_on = None  # optional callable(table, mode) -> bool
+        self.storage = _Storage(self)
+
+    def table(self, name: str) -> FakeQuery:
+        return FakeQuery(self, name)

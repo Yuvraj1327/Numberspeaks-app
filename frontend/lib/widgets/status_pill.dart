@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../models/report_status.dart';
 
-/// Small colored label used for report status and WhatsApp send status,
-/// wherever they appear (Dashboard, Results, User Detail).
+/// Small colored label used for report status and WhatsApp status,
+/// wherever they appear (Dashboard, Reports, Results, User Detail).
 class StatusPill extends StatelessWidget {
   final String label;
   final Color color;
@@ -28,49 +28,28 @@ class StatusPill extends StatelessWidget {
         color = AppTheme.warning;
         break;
       case ReportStatus.unknown:
-        color = AppTheme.textMuted;
+        color = Colors.black54;
         break;
     }
     return StatusPill(label: status.label, color: color);
   }
 
-  /// For a raw WhatsApp message status string ("sent" | "failed" |
-  /// "skipped_already_sent" | "skipped_no_number" | "skipped_no_bonus" |
-  /// "not_sent"), taken verbatim from the backend and only re-labeled for
-  /// readability, never reinterpreted. Covers both the per-send-attempt
-  /// status (WhatsAppMessageResult, from POST /send-whatsapp) and the
-  /// simpler latest-status field on a bonus result (BonusResult.
-  /// whatsappStatus, shown on the Results/User Detail screens).
-  ///
-  /// Labels match the four states asked for in the UI brief — Sent /
-  /// Pending / Failed / No Number — "Pending" covers "not_sent" (never
-  /// attempted) and "No Number" covers "skipped_no_number" (no WhatsApp
-  /// number on file, so nothing could be sent).
-  factory StatusPill.forWhatsAppStatus(String status) {
-    switch (status) {
-      case 'sent':
-        return const StatusPill(label: 'Sent', color: AppTheme.success);
-      case 'skipped_already_sent':
-        return const StatusPill(label: 'Already sent', color: AppTheme.success);
-      case 'failed':
-        return const StatusPill(label: 'Failed', color: AppTheme.danger);
-      case 'skipped_no_number':
-        return const StatusPill(label: 'No Number', color: AppTheme.warning);
-      case 'skipped_no_bonus':
-        return const StatusPill(label: 'No bonus owed', color: AppTheme.textMuted);
-      case 'not_sent':
-        return const StatusPill(label: 'Pending', color: AppTheme.warning);
-      default:
-        return StatusPill(label: status, color: AppTheme.textMuted);
-    }
+  /// WhatsApp status of one result. The app never sends a message itself, so
+  /// the only states are: not opened yet, or "Opened" (the admin opened
+  /// WhatsApp with the message pre-filled). Nothing here ever says "Sent" or
+  /// "Delivered" — that cannot be known.
+  factory StatusPill.forWhatsApp({required bool opened}) {
+    return opened
+        ? const StatusPill(label: 'Opened', color: AppTheme.blue)
+        : const StatusPill(label: 'Not opened', color: Colors.black54);
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.13),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(

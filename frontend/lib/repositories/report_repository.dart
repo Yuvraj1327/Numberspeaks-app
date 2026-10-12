@@ -1,90 +1,72 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
-import '../core/api_exception.dart';
 import '../models/bonus_calculation_summary.dart';
 import '../models/bonus_result.dart';
-import '../models/report_progress.dart';
+import '../models/bonus_settings.dart';
+import '../models/referral_entry.dart';
+import '../models/report_summary.dart';
 import '../models/upload_report_response.dart';
+import '../models/user_profile.dart';
 import '../models/validation_summary.dart';
-import '../models/whatsapp_send_summary.dart';
-import '../services/activity_log_store.dart';
 import '../services/bonus_api_service.dart';
-import '../services/local_report_store.dart';
+import '../services/referrals_api_service.dart';
 import '../services/reports_api_service.dart';
-import '../services/supabase_report_store.dart';
+import '../services/settings_api_service.dart';
+import '../services/users_api_service.dart';
 import '../services/whatsapp_api_service.dart';
 
-/// Single point of access for everything report/bonus/WhatsApp related.
-/// Screens depend on this, never on the API services directly — this is
-/// where the "which backend endpoint does this call" decision lives, and
-/// where the local "last report" convenience (see LocalReportStore), the
-/// local activity log (see ActivityLogStore), and the durable per-account
-/// Supabase copy (see SupabaseReportStore) are all layered on top of the
-/// real backend calls.
+/// Single point of access for everything report / bonus / user / referral /
+/// settings / WhatsApp related. Screens depend on this, never on the API
+/// services directly.
+///
+/// Nothing is cached or stored on the device: every list comes from the
+/// backend (which keeps it in Supabase, scoped to the logged-in admin), so
+/// it is identical after a refresh, a logout/login, or on another device.
 class ReportRepository extends ChangeNotifier {
   ReportRepository({
     required ReportsApiService reportsApi,
     required BonusApiService bonusApi,
+    required ReferralsApiService referralsApi,
+    required UsersApiService usersApi,
+    required SettingsApiService settingsApi,
     required WhatsAppApiService whatsappApi,
-    required LocalReportStore localStore,
-    required ActivityLogStore activityLog,
-    required String? Function() currentUserId,
-    SupabaseReportStore? supabaseStore,
   })  : _reportsApi = reportsApi,
         _bonusApi = bonusApi,
-        _whatsappApi = whatsappApi,
-        _localStore = localStore,
-        _activityLog = activityLog,
-        _currentUserId = currentUserId,
-        _supabaseStore = supabaseStore ?? SupabaseReportStore();
+        _referralsApi = referralsApi,
+        _usersApi = usersApi,
+        _settingsApi = settingsApi,
+        _whatsappApi = whatsappApi;
 
   final ReportsApiService _reportsApi;
   final BonusApiService _bonusApi;
+  final ReferralsApiService _referralsApi;
+  final UsersApiService _usersApi;
+  final SettingsApiService _settingsApi;
   final WhatsAppApiService _whatsappApi;
-  final LocalReportStore _localStore;
-  final ActivityLogStore _activityLog;
-  final String? Function() _currentUserId;
-  final SupabaseReportStore _supabaseStore;
 
-  /// Report ids for which a WhatsApp send has completed in this session —
-  /// used only to know when to show WhatsApp status alongside results
-  /// (see WhatsAppSendSummary, which is never persisted by the backend
-  /// in a way this app can query later — see README "known gaps").
-  /// Belongs to [_sessionOwner] only; see [_sessionSummaries].
-  final Map<String, WhatsAppSendSummary> _sessionWhatsAppSummaries = {};
-  String? _sessionOwner;
+  int _revision = 0;
+  int _structureRevision = 0;
 
-  /// The in-memory summaries, emptied whenever the signed-in account is not
-  /// the one they were recorded for (logout, or a different login), so a
-  /// send done by one account is never shown to the next.
-  Map<String, WhatsAppSendSummary> get _sessionSummaries {
-    final user = _currentUserId();
-    if (user != _sessionOwner) {
-      _sessionWhatsAppSummaries.clear();
-      _sessionOwner = user;
-    }
-    return _sessionWhatsAppSummaries;
+  /// Bumps on every change made through this repository. Tabs compare it to
+  /// the value they last loaded with, to know when to reload.
+  int get revision => _revision;
+
+  /// Bumps only when report data / calculations / referrals / rates change
+  /// (not for a saved WhatsApp number or a WhatsApp "opened" record, which
+  /// the screens already apply locally).
+  int get structureRevision => _structureRevision;
+
+  void _changed({bool structural = true}) {
+    _revision++;
+    if (structural) _structureRevision++;
+    notifyListeners();
   }
 
-  /// Runs a call that reads one report from the backend. If the backend
-  /// says that report does not exist for this account (deleted, or another
-  /// account's), it is dropped from the on-device history so the app stops
-  /// offering it — a stale id must not be retried forever. The error is
-  /// still thrown for the caller to handle. (FastAPI's bare "Not Found" is
-  /// a missing route on an older server, not a missing report, so it is
-  /// ignored here.)
-  Future<T> _forgetReportIfNotFound<T>(String reportId, Future<T> Function() call) async {
-    try {
-      return await call();
-    } on ApiException catch (e) {
-      if (e.kind == ApiErrorKind.notFound && e.message != 'Not Found') {
-        await _localStore.removeReport(reportId);
-      }
-      rethrow;
-    }
-  }
+  // --- Reports ----------------------------------------------------------
+
+  Future<List<ReportSummary>> listReports() => _reportsApi.listReports();
+
+  Future<ReportSummary> getReport(String reportId) => _reportsApi.getReport(reportId);
 
   Future<UploadReportResponse> uploadReport({
     required List<int> fileBytes,
@@ -96,261 +78,117 @@ class ReportRepository extends ChangeNotifier {
       fileName: fileName,
       onProgress: onProgress,
     );
-    await _localStore.upsertReport(
-      reportId: response.reportId,
-      fileName: response.fileName,
-      status: response.status,
-      userCount: response.totalRecords,
-    );
-    await _activityLog.log(
-      type: ActivityType.reportUploaded,
-      reportId: response.reportId,
-      fileName: response.fileName,
-      detail: '${response.totalRecords} record(s) extracted from '
-          '${response.pagesProcessed} page(s)',
-    );
-    // Durable, per-account copy in Supabase (report metadata + the PDF
-    // itself) — fire-and-forget: this never blocks or fails the upload
-    // that already succeeded against the real backend above.
-    unawaited(_supabaseStore.saveReportMeta(
-      reportId: response.reportId,
-      fileName: response.fileName,
-      status: response.status,
-      totalRecords: response.totalRecords,
-    ));
-    unawaited(_supabaseStore.uploadReportPdf(
-      reportId: response.reportId,
-      fileName: response.fileName,
-      fileBytes: fileBytes,
-    ));
-    notifyListeners();
+    _changed();
     return response;
   }
 
-  /// Live backend status of a report being processed in the background.
-  Future<ReportProgress> getReportStatus(String reportId) async {
-    final progress =
-        await _forgetReportIfNotFound(reportId, () => _reportsApi.getReportStatus(reportId));
-    // Keep the on-device history in step with what the backend really says,
-    // so the Reports/Dashboard cards show the current status.
-    await _localStore.upsertReport(
-      reportId: reportId,
-      status: progress.status,
-      userCount: progress.totalRecords > 0 ? progress.totalRecords : null,
-    );
-    // The Dashboard / Reports / Results tabs reload when told a report has
-    // finished, so its results show up without a manual refresh.
-    if (progress.isFinal) notifyListeners();
-    return progress;
+  /// Extracted rows (before calculation) or calculated results (after) —
+  /// the same endpoint serves both.
+  Future<List<BonusResult>> getResults(String reportId) async {
+    final results = await _bonusApi.getResults(reportId);
+    results.sort((a, b) => a.userName.toLowerCase().compareTo(b.userName.toLowerCase()));
+    return results;
   }
 
-  /// Called once the backend has finished a background run: records the
-  /// final figures (from the real results) exactly as [calculateBonus]
-  /// does for the manual flow, so history and activity stay consistent.
-  Future<void> recordBackgroundRunFinished(
-    String reportId, {
-    required String status,
-    required List<BonusResult> results,
-  }) async {
-    final bonusEligible = results.where((r) => r.bonusAmount != null).length;
-    final totalBonus = results.fold<double>(0, (sum, r) => sum + (r.bonusAmount ?? 0));
-    await _localStore.upsertReport(
-      reportId: reportId,
-      status: status,
-      userCount: results.length,
-      bonusEligibleCount: bonusEligible,
-      totalBonus: totalBonus,
-    );
-    await _activityLog.log(
-      type: ActivityType.bonusCalculated,
-      reportId: reportId,
-      detail: status == 'completed'
-          ? '$bonusEligible bonus(es) calculated'
-          : 'Bonus calculation did not complete successfully',
-    );
-    notifyListeners();
-  }
+  Future<BonusResult> getUserResult(String reportId, String userId) =>
+      _bonusApi.getUserResult(reportId, userId);
 
-  /// Permanently deletes a report (and its PDF and results) from the
-  /// account, then drops it from the on-device list. A report the backend
-  /// no longer has counts as already deleted.
-  Future<void> deleteReport(String reportId) async {
-    try {
-      await _reportsApi.deleteReport(reportId);
-    } on ApiException catch (e) {
-      if (e.kind != ApiErrorKind.notFound) rethrow;
-    }
-    await _localStore.removeReport(reportId);
-    _sessionWhatsAppSummaries.remove(reportId);
-    // The account's durable copy (PDF + saved results) goes too; fail-soft.
-    await _supabaseStore.deleteReport(reportId);
-    notifyListeners();
+  /// Saves admin corrections to one extracted row. Only the keys in
+  /// [changes] are sent.
+  Future<BonusResult> correctRow(
+    String reportId,
+    String bonusResultId,
+    Map<String, dynamic> changes,
+  ) async {
+    final row = await _reportsApi.correctRow(reportId, bonusResultId, changes);
+    _changed();
+    return row;
   }
 
   Future<ValidationSummary> validateReport(String reportId) async {
     final summary = await _reportsApi.validateReport(reportId);
-    // Scoped to this specific reportId (not just "whatever was last
-    // touched") — matters once more than one report is tracked, e.g.
-    // continuing an older report from the Reports tab.
-    await _localStore.upsertReport(
-      reportId: reportId,
-      status: summary.status,
-      userCount: summary.totalInputRecords,
-    );
-    await _activityLog.log(
-      type: ActivityType.reportProcessed,
-      reportId: reportId,
-      detail: summary.status == 'validated'
-          ? '${summary.validCount}/${summary.totalInputRecords} row(s) valid'
-          : 'Validation did not complete (${summary.invalidCount} invalid row(s))',
-    );
-    notifyListeners();
+    _changed();
     return summary;
   }
 
   Future<BonusCalculationSummary> calculateBonus(String reportId) async {
     final summary = await _bonusApi.calculateBonus(reportId);
-    final bonusEligible = summary.results.where((r) => r.bonusAmount != null).length;
-    final totalBonus =
-        summary.results.fold<double>(0, (sum, r) => sum + (r.bonusAmount ?? 0));
-    await _localStore.upsertReport(
-      reportId: reportId,
-      status: summary.status,
-      userCount: summary.totalInputRecords,
-      bonusEligibleCount: bonusEligible,
-      totalBonus: totalBonus,
-    );
-    await _activityLog.log(
-      type: ActivityType.bonusCalculated,
-      reportId: reportId,
-      detail: summary.status == 'completed'
-          ? '${summary.calculatedCount} bonus(es) calculated'
-          : 'Bonus calculation did not complete successfully',
-    );
-    // Same durable Supabase copy as uploadReport, now with the real
-    // calculated results too — fire-and-forget, never blocks this call.
-    unawaited(_supabaseStore.saveReportMeta(
-      reportId: reportId,
-      status: summary.status,
-      totalRecords: summary.totalInputRecords,
-      bonusEligibleCount: bonusEligible,
-      totalBonus: totalBonus,
-    ));
-    unawaited(_supabaseStore.saveResults(reportId, summary.results));
-    notifyListeners();
+    _changed();
     return summary;
   }
 
-  /// Results for a report, with any admin-entered WhatsApp number (saved
-  /// earlier in Supabase — see [saveWhatsAppNumber]) merged back in for
-  /// rows that don't already have one. The FastAPI backend stays the
-  /// source of truth whenever it's reachable; its response is also written
-  /// through to Supabase so it stays available if the backend can't be
-  /// reached next time (see the fallback below) — satisfies "results
-  /// remain available after refresh/logout-login" even without a live
-  /// backend connection, for whatever this account already has saved.
-  Future<List<BonusResult>> getResults(String reportId) async {
-    try {
-      final results =
-          await _forgetReportIfNotFound(reportId, () => _bonusApi.getResults(reportId));
-      final merged = await _supabaseStore.mergeWhatsAppNumbers(reportId, results);
-      unawaited(_supabaseStore.saveResults(reportId, merged));
-      return merged;
-    } on ApiException catch (e) {
-      if (e.kind == ApiErrorKind.notFound) rethrow;
-      final cached = await _supabaseStore.getCachedResults(reportId);
-      if (cached.isNotEmpty) return cached;
-      rethrow;
-    }
+  // --- Referrals --------------------------------------------------------
+
+  Future<List<ReferralEntry>> listReferrals(String reportId) => _referralsApi.list(reportId);
+
+  Future<ReferralEntry> addReferral(
+    String reportId, {
+    required String referrerUserId,
+    required String referredUserId,
+    double? rate,
+  }) async {
+    final entry = await _referralsApi.add(
+      reportId,
+      referrerUserId: referrerUserId,
+      referredUserId: referredUserId,
+      rate: rate,
+    );
+    _changed();
+    return entry;
   }
 
-  Future<BonusResult> getUserResult(String reportId, String userId) async {
-    final result = await _bonusApi.getUserResult(reportId, userId);
-    final merged = await _supabaseStore.mergeWhatsAppNumbers(reportId, [result]);
-    return merged.first;
+  Future<void> removeReferral(String reportId, String entryId) async {
+    await _referralsApi.remove(reportId, entryId);
+    _changed();
   }
 
-  /// Saves (or updates) the WhatsApp number an admin typed in for one
-  /// user's result row. There is no FastAPI endpoint for this — the
-  /// backend's extracted data either has a number or it doesn't — so this
-  /// is Supabase-only, exactly like the rest of this round's persistence.
-  /// Never throws (see [SupabaseReportStore]).
-  Future<void> saveWhatsAppNumber(
-    String reportId,
-    BonusResult result,
-    String whatsappNumber,
-  ) {
-    return _supabaseStore.updateWhatsAppNumber(
+  // --- Users ------------------------------------------------------------
+
+  Future<List<UserProfile>> listUsers({String? query}) => _usersApi.list(query: query);
+
+  Future<UserProfile> getUser(String userId) => _usersApi.get(userId);
+
+  Future<UserHistory> getUserHistory(String userId) => _usersApi.history(userId);
+
+  /// Saves the WhatsApp number permanently (an empty string clears it).
+  /// Throws an [ApiException] if it is not a valid number or could not be
+  /// saved — callers must not show it as saved in that case.
+  Future<UserProfile> saveWhatsAppNumber(String userId, String number) async {
+    final user = await _usersApi.saveWhatsAppNumber(userId, number);
+    _changed(structural: false);
+    return user;
+  }
+
+  // --- Settings ---------------------------------------------------------
+
+  Future<BonusSettings> getSettings() => _settingsApi.get();
+
+  Future<BonusSettings> saveSettings({
+    required double personalRate,
+    required double referralRate,
+  }) async {
+    final settings = await _settingsApi.save(personalRate: personalRate, referralRate: referralRate);
+    _changed();
+    return settings;
+  }
+
+  // --- WhatsApp ---------------------------------------------------------
+
+  /// Records that WhatsApp was opened for this result. Call this only after
+  /// the `wa.me` link was actually launched.
+  Future<WhatsAppOpenedRecord> recordWhatsAppOpened({
+    required String reportId,
+    required String bonusResultId,
+    required String whatsappNumber,
+    required String message,
+  }) async {
+    final record = await _whatsappApi.recordOpened(
       reportId: reportId,
-      result: result,
+      bonusResultId: bonusResultId,
       whatsappNumber: whatsappNumber,
+      message: message,
     );
+    _changed(structural: false);
+    return record;
   }
-
-  Future<WhatsAppSendSummary> sendWhatsApp(String reportId, {bool force = false}) async {
-    final summary = await _whatsappApi.sendWhatsAppForReport(reportId, force: force);
-    _sessionSummaries[reportId] = summary;
-    await _activityLog.log(
-      type: ActivityType.whatsappSent,
-      reportId: reportId,
-      detail: '${summary.sentCount} sent, ${summary.failedCount} failed, '
-          '${summary.skippedCount} skipped',
-    );
-    notifyListeners();
-    return summary;
-  }
-
-  /// Status for one user's WhatsApp message from a send that happened
-  /// during this app session for this report, if any. Null means "no send
-  /// happened this session" — callers should fall back to the durable
-  /// `BonusResult.whatsappStatus` from GET /results in that case (this
-  /// session-only value is kept because it can be more specific right
-  /// after a send, e.g. distinguishing "skipped_already_sent" from a
-  /// plain "not_sent").
-  String? sessionWhatsAppStatusFor(String reportId, String bonusResultId) {
-    final summary = _sessionSummaries[reportId];
-    if (summary == null) return null;
-    for (final result in summary.results) {
-      if (result.bonusResultId == bonusResultId) return result.status;
-    }
-    return null;
-  }
-
-  WhatsAppSendSummary? sessionWhatsAppSummaryFor(String reportId) => _sessionSummaries[reportId];
-
-  Future<String?> getLastReportId() async {
-    final reports = await getRecentReports();
-    return reports.isEmpty ? null : reports.first.reportId;
-  }
-
-  Future<String?> getLastReportFileName() async {
-    final reports = await getRecentReports();
-    return reports.isEmpty ? null : reports.first.fileName;
-  }
-
-  Future<String?> getLastReportStatus() async {
-    final reports = await getRecentReports();
-    return reports.isEmpty ? null : reports.first.status;
-  }
-
-  /// The signed-in account's reports, newest first — powers the Reports
-  /// tab. The backend's list for the account is the source of truth, so
-  /// they are all there again after logging out and back in (or on a new
-  /// device). The on-device copy ([LocalReportStore]) is refreshed from it
-  /// and only used as-is when the list can't be fetched (offline, or an
-  /// older server without the endpoint).
-  Future<List<LocalReportEntry>> getRecentReports() async {
-    try {
-      await _localStore.syncWithServer(await _reportsApi.listReports());
-    } on ApiException {
-      // Fall through to the last known list.
-    }
-    return _localStore.getRecentReports();
-  }
-
-  /// Recent real actions this device has taken (upload/validate/calculate/
-  /// send), most recent first — powers the Dashboard's activity feed. See
-  /// [ActivityLogStore] for exactly what this does and doesn't store.
-  Future<List<ActivityEntry>> getRecentActivity({int limit = 5}) =>
-      _activityLog.getRecent(limit: limit);
 }

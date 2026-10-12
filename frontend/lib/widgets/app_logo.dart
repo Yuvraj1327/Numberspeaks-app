@@ -32,7 +32,7 @@ class AppLogo extends StatelessWidget {
         boxShadow: elevated
             ? [
                 BoxShadow(
-                  color: AppTheme.navy.withOpacity(0.28),
+                  color: AppTheme.navy.withValues(alpha: 0.28),
                   blurRadius: size * 0.3,
                   offset: Offset(0, size * 0.1),
                 ),

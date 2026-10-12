@@ -3,11 +3,10 @@ import 'package:flutter/material.dart';
 import '../routing/app_routes.dart';
 
 /// What action makes sense for a report given its last known `status`
-/// (exactly the backend's own state-machine value — see
-/// numberspeaks-backend README — never guessed). Shared by the Dashboard
-/// and Reports tabs so a report card behaves identically wherever it's
-/// shown.
-enum ReportNextActionKind { continueProcessing, viewResults }
+/// (exactly the backend's own state-machine value, never guessed). Shared
+/// by the Dashboard and Reports tabs so a report card behaves identically
+/// wherever it's shown.
+enum ReportNextActionKind { reviewAndCalculate, viewResults }
 
 class ReportNextAction {
   final ReportNextActionKind kind;
@@ -18,7 +17,7 @@ class ReportNextAction {
 
   /// The route this action pushes to, given the report id.
   String get route =>
-      kind == ReportNextActionKind.viewResults ? AppRoutes.results : AppRoutes.processing;
+      kind == ReportNextActionKind.viewResults ? AppRoutes.results : AppRoutes.review;
 }
 
 ReportNextAction resolveNextAction(String? status) {
@@ -29,27 +28,13 @@ ReportNextAction resolveNextAction(String? status) {
         label: 'View Results',
         icon: Icons.list_alt_outlined,
       );
-    case 'failed':
-      return const ReportNextAction(
-        kind: ReportNextActionKind.continueProcessing,
-        label: 'Retry Processing',
-        icon: Icons.refresh,
-      );
-    case 'uploaded':
-    case 'processing':
-    case 'validating':
-    case 'calculating':
-    case 'validated':
-      return const ReportNextAction(
-        kind: ReportNextActionKind.continueProcessing,
-        label: 'Continue Processing',
-        icon: Icons.play_arrow,
-      );
     default:
+      // uploaded / processing / validated / failed: the admin reviews the
+      // extracted rows, then confirms the calculation.
       return const ReportNextAction(
-        kind: ReportNextActionKind.continueProcessing,
-        label: 'Continue',
-        icon: Icons.play_arrow,
+        kind: ReportNextActionKind.reviewAndCalculate,
+        label: 'Review & Calculate',
+        icon: Icons.fact_check_outlined,
       );
   }
 }

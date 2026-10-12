@@ -1,5 +1,55 @@
 # Numberspeaks API
 
+> ## ★ Complete Bonus Management update (read this first)
+>
+> This release **supersedes** the older "Step 7 – WhatsApp integration" and "Actual Bonus Feature"
+> sections further down (kept only as history). What changed:
+>
+> | Area | Now |
+> |---|---|
+> | Flow | Upload PDF → review / correct extracted rows → (optional) add referral entries → **Confirm & Calculate** → results |
+> | Personal rule | loss → `+3%` of the loss; win → `-3%` of the win; zero → `0` (rate configurable) |
+> | Referral rule | manual entries, default `10%` (configurable per entry): referred user's loss → `+`, win → `-` |
+> | Final | `previous carried + personal + referral`. `> 0` → payable; `< 0` → payable `0` and the negative carries forward; `0` → `0` |
+> | WhatsApp | **No automatic sending.** The app opens a prefilled `wa.me` link; the backend only records "initiated/opened" |
+> | Ownership | Every row is stamped with `owner_id`, taken **only** from the verified Supabase access token. Any owner id in a request body is ignored |
+> | Data | Everything persists in Supabase (reports, extracted rows, results, users, WhatsApp numbers, referrals, rates, history) |
+>
+> No other business rules are applied.
+>
+> ### Setup / upgrade
+> 1. Back up, then run **`supabase/multi_tenant_bonus_schema.sql`** in the Supabase SQL editor. It is additive and
+>    idempotent (safe to re-run): it adds `owner_id` columns, new tables (`bonus_settings`, `referral_entries`,
+>    `calculation_history`, `whatsapp_initiations`) and indexes. Existing tables and rows are preserved.
+> 2. Existing (pre-update) rows have `owner_id = NULL` and are therefore invisible to every admin. To adopt them for one
+>    admin, run the "claim legacy data" statements at the bottom of that SQL file once, with that admin's auth user id.
+> 3. Environment: only `SUPABASE_URL` and `SUPABASE_KEY` (service-role, server-side only) are required. No JWT secret is
+>    needed — tokens are verified by calling Supabase `GET /auth/v1/user`. The `WHATSAPP_*` variables are legacy and unused.
+> 4. Flutter keeps only the **anon** key and sends `Authorization: Bearer <access token>` to this API.
+>
+> ### Endpoints (all under `/api/v1`, all require a valid bearer token except `/health`)
+> | Method & path | Purpose |
+> |---|---|
+> | `POST /reports/upload` | Upload PDF (any page count), extract rows |
+> | `GET /reports`, `GET /reports/{id}` | Report history / one report |
+> | `GET /reports/{id}/results`, `GET /reports/{id}/results/{user_id}` | Results table / one user's result with breakdown |
+> | `PATCH /reports/{id}/rows/{bonus_result_id}` | Admin correction of an extracted row |
+> | `POST /reports/{id}/validate` | Re-validate before calculation |
+> | `POST /reports/{id}/calculate-bonus` | Confirm & calculate (idempotent re-run) |
+> | `GET/POST/DELETE /reports/{id}/referrals` | Manual referral entries (duplicates rejected) |
+> | `GET /users`, `GET/PATCH /users/{id}`, `GET /users/{id}/history` | Individual users, WhatsApp number, history |
+> | `GET/PUT /settings` | Personal % and referral % |
+> | `POST /reports/{id}/results/{bonus_result_id}/whatsapp-initiated` | Record that the admin opened WhatsApp |
+>
+> ### Tests
+> ```bash
+> pip install -r requirements-dev.txt
+> python -m pytest
+> ```
+> The suite (143 tests) runs against an in-memory fake of the Supabase client, covering the calculator, PDF extraction and
+> corrections, carry-forward, referrals + duplicate prevention, WhatsApp number edit/save, token verification, and
+> account-to-account isolation. It does **not** exercise a real Postgres / PostgREST instance.
+
 Backend for **Numberspeaks** — a bonus calculation app.
 
 Completed so far:
@@ -194,16 +244,6 @@ still exists (`ON DELETE RESTRICT`), to protect financial records.
 **Row Level Security** is enabled on all three tables with no public
 policies — only the backend's service-role key can read/write them
 directly.
-
-**Per-account access:** every `/reports/*` endpoint requires the Supabase
-session token (`Authorization: Bearer <access token>`), verified against
-Supabase Auth. `reports.owner_id` (and `users.owner_id`, so recipients are
-not shared between accounts) is set from that token on upload, and a report
-is only served to its owner or to an admin (`app_metadata.role = "admin"`,
-or an id in `ADMIN_USER_IDS`); anyone else gets the same 404 as for a missing
-report. Run `supabase/ownership_schema.sql` before deploying. Reports that
-existed before it have no owner and are admin-only until assigned (see that
-file).
 
 **Authorized access:** the `users` table above is for report *subjects*
 (bonus recipients), not app logins. Login/authorization for the staff who
@@ -550,7 +590,9 @@ paths against a real report, and a run against your actual PDF's data —
 all pending the same two things as Steps 3-4: live Supabase credentials
 and the real client PDF, plus now the bonus formula itself.
 
-## WhatsApp integration (Step 7)
+## WhatsApp integration (Step 7) — SUPERSEDED
+
+> **Superseded:** the backend no longer sends WhatsApp messages. See the "Complete Bonus Management update" at the top. The text below is historical.
 
 ### Two things weren't specified, so here's what was assumed
 
@@ -684,59 +726,6 @@ without a live call:
 WhatsApp Business credentials), and the `404`/`409` paths against a real
 report — same live-credentials gap as every other step so far.
 
-## Background report processing
-
-`POST /api/v1/reports/upload` no longer does the work inside the HTTP
-request. It only checks the file is a PDF, stores it in Supabase Storage,
-creates the `reports` row, queues the report and returns `202` with the
-report id — in milliseconds, whatever the PDF's size. A client timeout can
-therefore no longer be confused with a processing failure, and closing the
-app never stops or fails a report.
-
-```
-POST /reports/upload  ->  202 { report_id, status: "uploaded" }
-                            |
-                            v   (background worker, app/services/report_processor.py)
-uploaded -> processing   download PDF, extract every page, save users + bonus_results in bulk
-         -> validating   read rows back, run the existing validation
-         -> calculating  existing 3%-of-a-loss formula, saved in bulk
-         -> completed | failed
-
-GET /reports/{id}/status   -> { status, is_final, pages_processed, total_records,
-                                calculated_count, failed_count, error_message, warnings, ... }
-GET /reports/{id}/results  -> the per-user rows (once status is "completed")
-```
-
-Poll `/status` every couple of seconds until `is_final` is `true`. A
-`failed` report carries a user-safe `error_message`.
-
-- **Bulk database work.** Users are looked up 100 names per request, new
-  users are inserted and changed users updated in batches, and
-  `bonus_results` are saved and updated in batches of `DB_BATCH_SIZE` (500).
-  For the client's 174-user report that is about 17 Supabase requests
-  instead of 872. If a batch is rejected it is retried row by row, so one
-  bad row costs only itself.
-- **No duplicate processing.** A worker must first claim the report with an
-  atomic compare-and-swap on `(status, attempts)`; a second upload
-  handler, worker or retry loses and does nothing. The legacy
-  `/validate` and `/calculate-bonus` endpoints answer `409` while a
-  background job owns the report.
-- **Bounded load.** At most `MAX_CONCURRENT_REPORT_JOBS` (2) reports are
-  processed at once per instance; the rest wait as `uploaded`. PDF pages
-  are released as they are read, and results are read in pages of 1000
-  (Supabase never returns more per request).
-- **Restart safety.** Every stage updates the report row
-  (`reports.updated_at`). A report that has not changed for
-  `PROCESSING_STALE_SECONDS` (600) is presumed abandoned (e.g. a deploy
-  restarted the server mid-job) and is resumed the next time its status is
-  requested — at most 3 attempts, then it is marked `failed`.
-- **Logging.** Logs contain report ids, counts, timings and error types
-  only — never PDF contents, names, phone numbers or amounts.
-
-Tests: `venv/bin/python -m unittest tests.test_report_pipeline -v` (runs the
-whole pipeline against an in-memory Supabase fake, including the client's
-PDF if it is at `~/Downloads/Party Profit Loss (1).pdf` or `CLIENT_PDF`).
-
 ## Local setup
 
 ### 1. Create and activate a virtual environment
@@ -762,9 +751,6 @@ pip install -r requirements.txt
    Storage bucket that uploaded PDFs are saved into.
 4. Run `supabase/whatsapp_schema.sql` the same way to create the
    `whatsapp_messages` table used by Step 7.
-   Then run `supabase/processing_status_schema.sql` to add the status
-   tracking that background report processing needs (**required** — uploads
-   will stay at `uploaded` without it).
 5. In **Project Settings → API**, copy:
    - **Project URL** → this is `SUPABASE_URL`.
    - **service_role secret key** → this is `SUPABASE_KEY`.
@@ -836,7 +822,9 @@ All checks passed: connection, insert, and read all work.
 You can also open `http://localhost:8000/docs` for the interactive Swagger
 UI, which lists every available endpoint.
 
-## Actual Bonus Feature (client-confirmed formula & flow)
+## Actual Bonus Feature (client-confirmed formula & flow) — SUPERSEDED
+
+> **Superseded:** the 3% / 10% / carry-forward rules in the top section replace the formula below. Historical only.
 
 This section documents the update that implements your real bonus rule
 and message flow, on top of everything in Steps 1-7 above. Nothing here

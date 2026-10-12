@@ -1,5 +1,51 @@
 # Numberspeaks — Flutter Frontend (Step 8)
 
+> ## ★ Complete Bonus Management update (read this first)
+>
+> This release **supersedes** the older sections below wherever they differ (local stores, direct-Supabase
+> persistence, WhatsApp API sending, the on-device activity log).
+>
+> ### Flow
+> **Upload PDF → Review Extracted Data (edit any row) → Referrals (optional) → Confirm & Calculate → Results**
+> Reports in the *Reports* tab reopen at the right step: not-yet-calculated reports go back to Review, completed ones to Results.
+>
+> ### Screens added / rewritten
+> | Screen | What it does |
+> |---|---|
+> | `report_review_screen.dart` | Table of extracted rows (User ID/Name, Level, Casino/Sport/Third-party Pts, P/L, Ptype, WhatsApp). Tap a row to correct it. "Confirm & Calculate" |
+> | `referrals_screen.dart` | Add / remove manual referral entries (referrer, referred user, optional rate %) |
+> | `results_screen.dart` | Table: User ID/Name, P/L, Personal, Referral, Previous balance, Final payable, WhatsApp number, WhatsApp action. Search, filters, sort, report-history picker |
+> | `user_detail_screen.dart` | Payable card, step-by-step breakdown, WhatsApp number edit + send, history across reports |
+> | `users_screen.dart` | All casino users with search; edit/save WhatsApp number (Settings → Casino users) |
+> | `rates_screen.dart` | Personal % (default 3) and referral % (default 10) (Settings → Bonus rates) |
+>
+> ### WhatsApp
+> The app **never sends automatically**. "Send" opens `https://wa.me/<digits>?text=<message>` with the saved number and an
+> editable message (default: `Hi {User ID}, you've got ₹{Bonus Amount} bonus. Please enjoy your game!`, using the actual
+> payable amount). Only after the link actually opened does the app tell the backend it was *opened*; the status shown is
+> "Opened" / "Not opened" — never "delivered". Numbers must include the country code (e.g. +91…).
+>
+> ### API mapping
+> Everything goes through the FastAPI backend (`/api/v1/reports…`, `/users…`, `/settings`) with the signed-in admin's bearer
+> token. The app holds only the Supabase **anon** key. Ownership is decided by the backend from the token, never by the app.
+>
+> ### Retired files (now comment-only stubs — safe to delete)
+> `lib/services/supabase_report_store.dart`, `local_report_store.dart`, `activity_log_store.dart`,
+> `lib/models/whatsapp_send_summary.dart`, `lib/widgets/whatsapp_send_field.dart`, `supabase/numberspeaks_results_schema.sql`.
+> The database schema now lives in the backend project (`supabase/multi_tenant_bonus_schema.sql`). Dashboard "Recent
+> activity" (device-local) was replaced by "Recent reports" (from the backend), so nothing is kept per-device across accounts.
+>
+> ### Run
+> ```bash
+> flutter pub get
+> flutter analyze
+> flutter test
+> flutter run -d chrome   # or a device; reads .env as before
+> ```
+> **Not verified in the authoring sandbox:** it has no Flutter/Dart SDK, so `flutter analyze`, `flutter test` and a real
+> app run have not been executed on this code. Please run them and send back any output.
+
+
 This is the Flutter UI for the Numberspeaks Bonus Calculation App. It is a
 **frontend only** — all business logic (PDF extraction, validation, bonus
 calculation, WhatsApp sending) lives in the existing FastAPI backend
@@ -939,3 +985,25 @@ clean, no issues found. Please run `flutter pub get`, `flutter analyze`,
 and `flutter run -d chrome` and send back anything they report, and run
 the SQL script in your Supabase project before testing the new storage/
 WhatsApp-number-persistence behavior.
+
+### Hotfix: table-name collision with the backend's own database (same round)
+
+Running the original SQL script failed with
+`ERROR: 42703: column "owner_id" does not exist` on `bonus_results`. That
+means your Supabase project's Postgres database already has its own
+`public.bonus_results` table (and very likely `public.reports` too) —
+almost certainly created by the FastAPI backend itself, with a different
+schema (`user_id`, no `owner_id`). The script's `create table if not
+exists` silently skipped creating the table since one already existed
+under that name, and the next statement (a policy referencing `owner_id`)
+then failed against the backend's actual columns.
+
+**Fix:** `supabase/numberspeaks_results_schema.sql` and
+`services/supabase_report_store.dart` now use `ns_reports` and
+`ns_bonus_results` — names that can't collide with anything the backend
+owns — instead of `reports`/`bonus_results`. Nothing else changed; re-run
+the updated script. No cleanup is needed first: Supabase's SQL editor runs
+a whole pasted script as one transaction, so last time's error rolled back
+everything before it in that same run (including the `enable row level
+security` line that touched the backend's existing table) — your database
+is exactly as it was before you ran anything.

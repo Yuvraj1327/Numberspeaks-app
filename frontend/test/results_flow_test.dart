@@ -10,14 +10,13 @@ import 'package:numberspeaks_app/core/api_client.dart';
 import 'package:numberspeaks_app/core/app_theme.dart';
 import 'package:numberspeaks_app/repositories/report_repository.dart';
 import 'package:numberspeaks_app/screens/results_screen.dart';
-import 'package:numberspeaks_app/services/activity_log_store.dart';
 import 'package:numberspeaks_app/services/bonus_api_service.dart';
-import 'package:numberspeaks_app/services/local_report_store.dart';
+import 'package:numberspeaks_app/services/referrals_api_service.dart';
 import 'package:numberspeaks_app/services/reports_api_service.dart';
-import 'package:numberspeaks_app/services/supabase_report_store.dart';
+import 'package:numberspeaks_app/services/settings_api_service.dart';
+import 'package:numberspeaks_app/services/users_api_service.dart';
 import 'package:numberspeaks_app/services/whatsapp_api_service.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// Answers the backend's report endpoints from [reports] / [results] with the
 /// exact JSON shapes FastAPI returns (app/schemas/*.py), so the real
@@ -36,7 +35,21 @@ class _FakeBackend implements HttpClientAdapter {
     Object body;
     var status = 200;
     final resultsMatch = RegExp(r'/reports/([^/]+)/results$').firstMatch(path);
-    if (path.endsWith('/reports')) {
+    final reportMatch = RegExp(r'/reports/([^/]+)$').firstMatch(path);
+    final calculateMatch = RegExp(r'/reports/([^/]+)/calculate-bonus$').firstMatch(path);
+    if (options.method == 'POST' && calculateMatch != null) {
+      body = {
+        'report_id': calculateMatch.group(1),
+        'status': 'completed',
+        'total_input_records': 1,
+        'calculated_count': 1,
+        'failed_count': 0,
+        'total_payable': 30,
+        'payable_user_count': 1,
+        'results': <Object>[],
+        'errors': <Object>[],
+      };
+    } else if (path.endsWith('/reports')) {
       body = reports;
     } else if (resultsMatch != null) {
       final rows = results[resultsMatch.group(1)];
@@ -46,6 +59,9 @@ class _FakeBackend implements HttpClientAdapter {
       } else {
         body = rows;
       }
+    } else if (reportMatch != null &&
+        reports.any((e) => e['report_id'] == reportMatch.group(1))) {
+      body = reports.firstWhere((e) => e['report_id'] == reportMatch.group(1));
     } else {
       status = 404;
       body = {'detail': 'Not Found'};
@@ -95,25 +111,35 @@ Map<String, dynamic> _report(String id, String status) => {
 void main() {
   late _FakeBackend backend;
   late ReportRepository repo;
-  late String? signedIn;
 
   setUp(() {
     dotenv.testLoad(fileInput: '');
-    SharedPreferences.setMockInitialValues({});
     backend = _FakeBackend();
-    signedIn = 'user-a';
     final dio = Dio(BaseOptions(baseUrl: 'http://fake/api/v1'))..httpClientAdapter = backend;
     final api = ApiClient(dio: dio);
     repo = ReportRepository(
       reportsApi: ReportsApiService(api),
       bonusApi: BonusApiService(api),
+      referralsApi: ReferralsApiService(api),
+      usersApi: UsersApiService(api),
+      settingsApi: SettingsApiService(api),
       whatsappApi: WhatsAppApiService(api),
-      localStore: LocalReportStore(userId: () => signedIn),
-      activityLog: ActivityLogStore(userId: () => signedIn),
-      currentUserId: () => signedIn,
-      supabaseStore: SupabaseReportStore(),
     );
   });
+
+  void useDesktopSurface(WidgetTester tester) {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+  }
+
+  // The tab keeps a frame scheduled after loading, so pumpAndSettle would
+  // never return; pump a bounded amount of time instead.
+  Future<void> settle(WidgetTester tester) async {
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+  }
 
   Widget host(Widget child) => ChangeNotifierProvider<ReportRepository>.value(
         value: repo,
@@ -121,10 +147,12 @@ void main() {
       );
 
   testWidgets('a pushed Results screen lists the backend results', (tester) async {
+    useDesktopSurface(tester);
     backend.results['r1'] = [
       _row('1', 'r1', 'Alice', -1000, 30),
       _row('2', 'r1', 'Bob', 500, 0),
     ];
+    backend.reports = [_report('r1', 'completed')];
     await tester.pumpWidget(host(const ResultsScreen(reportId: 'r1')));
     await tester.pumpAndSettle();
 
@@ -133,51 +161,58 @@ void main() {
   });
 
   testWidgets('the Results tab shows a report that finishes after the tab loaded', (tester) async {
+    useDesktopSurface(tester);
     // The tab is built at login, before anything has been uploaded.
     await tester.pumpWidget(host(const ResultsTab()));
-    await tester.pumpAndSettle();
+    await settle(tester);
     expect(find.textContaining('No results yet'), findsOneWidget);
 
-    // The user uploads a PDF; it finishes processing in the background.
+    // The user uploads a PDF; its bonus calculation finishes.
     backend.reports = [_report('r1', 'completed')];
     backend.results['r1'] = [_row('1', 'r1', 'Alice', -1000, 30)];
-    await repo.recordBackgroundRunFinished('r1', status: 'completed', results: const []);
-    await tester.pumpAndSettle();
+    final finished = repo.calculateBonus('r1');
+    await settle(tester);
+    await finished;
 
     expect(find.text('Alice'), findsOneWidget);
   });
 
-  testWidgets('a number typed for one user never moves to another when the list is re-sorted',
-      (tester) async {
+  testWidgets('a saved number stays on its own user when the list is re-sorted', (tester) async {
+    // The number is now added through a dialog and saved on the backend, so
+    // the table shows it from the row's own data; re-sorting must keep it
+    // beside the same user.
+    useDesktopSurface(tester);
+    backend.reports = [_report('r1', 'completed')];
     backend.results['r1'] = [
-      _row('1', 'r1', 'Alice', -1000, 30),
+      {..._row('1', 'r1', 'Alice', -1000, 30), 'whatsapp_number': '911111111111'},
       _row('2', 'r1', 'Bob', -2000, 60),
     ];
     await tester.pumpWidget(host(const ResultsScreen(reportId: 'r1')));
     await tester.pumpAndSettle();
 
-    // Alice is first (A-Z). Type a number on her card.
-    await tester.tap(find.byType(TextField).at(1)); // a user focuses the field first
-    await tester.pump();
-    await tester.enterText(find.byType(TextField).at(1), '911111111111');
-    await tester.pump();
-    // Re-sort Z-A: Bob is now first.
+    double rowGap(String name) =>
+        (tester.getCenter(find.text(name)).dy - tester.getCenter(find.text('911111111111')).dy).abs();
+
+    expect(rowGap('Alice'), lessThan(30));
+    expect(rowGap('Bob'), greaterThan(30));
+
     await tester.tap(find.byIcon(Icons.sort));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Name (Z-A)'));
     await tester.pumpAndSettle();
 
-    final fields = tester.widgetList<TextField>(find.byType(TextField)).toList();
-    // fields[0] is the search box; fields[1] is Bob's number field now.
-    expect(fields[1].controller!.text, isEmpty, reason: "Alice's number must not show on Bob");
-    expect(fields[2].controller!.text, '911111111111');
+    expect(rowGap('Alice'), lessThan(30));
+    expect(rowGap('Bob'), greaterThan(30));
+    expect(find.text('Add number'), findsOneWidget);
   });
 
   testWidgets('moving a mouse over the results does not throw', (tester) async {
+    useDesktopSurface(tester);
     backend.results['r1'] = [
       _row('1', 'r1', 'Alice', -1000, 30),
       _row('2', 'r1', 'Bob', 500, 0),
     ];
+    backend.reports = [_report('r1', 'completed')];
     await tester.pumpWidget(host(const ResultsScreen(reportId: 'r1')));
     await tester.pumpAndSettle();
 

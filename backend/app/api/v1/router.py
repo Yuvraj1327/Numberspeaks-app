@@ -1,12 +1,12 @@
 """
 Aggregates all v1 endpoint routers into a single router that main.py mounts
-under the /api/v1 prefix. New endpoint modules get added here as they are
-built in later steps (upload, validation, bonus, whatsapp, etc.).
+under the /api/v1 prefix. The health endpoints are public; every other
+router's endpoints require a logged-in admin (see app/core/auth.py).
 """
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import bonus, db_health, health, reports, whatsapp
+from app.api.v1.endpoints import bonus, db_health, health, referrals, reports, settings, users, whatsapp
 
 api_router = APIRouter()
 
@@ -14,4 +14,7 @@ api_router.include_router(health.router)
 api_router.include_router(db_health.router)
 api_router.include_router(reports.router)
 api_router.include_router(bonus.router)
+api_router.include_router(referrals.router)
+api_router.include_router(users.router)
+api_router.include_router(settings.router)
 api_router.include_router(whatsapp.router)

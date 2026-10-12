@@ -35,28 +35,19 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
 
-    # --- Access control ---
-    # Comma-separated Supabase user ids that may see and manage every
-    # report (in addition to users whose Supabase app_metadata.role is
-    # "admin"). Everyone else only has access to the reports they uploaded.
-    ADMIN_USER_IDS: str = ""
+    # --- Bonus rates (defaults only) ---
+    # Each admin account can override these in the app (Settings screen ->
+    # stored in the bonus_settings table). These are what a brand-new
+    # account starts with, as fractions (0.03 = 3%, 0.10 = 10%).
+    DEFAULT_PERSONAL_RATE: float = 0.03
+    DEFAULT_REFERRAL_RATE: float = 0.10
 
-    # --- Report processing ---
-    # Largest PDF accepted by POST /reports/upload.
-    MAX_UPLOAD_MB: int = 50
-    # How many reports are processed at the same time in this process; the
-    # rest wait their turn (status stays "uploaded"). Keeps memory bounded
-    # when many users upload at once.
-    MAX_CONCURRENT_REPORT_JOBS: int = 2
-    # Rows per bulk Supabase insert/upsert request.
-    DB_BATCH_SIZE: int = 500
-    # A report that has been in a processing state this long without any
-    # progress is treated as abandoned (e.g. the server restarted mid-job)
-    # and is picked up again the next time its status is requested.
-    PROCESSING_STALE_SECONDS: int = 600
-
-    # --- WhatsApp ---
-    # Default provider is Meta's WhatsApp Cloud API (the official WhatsApp
+    # --- WhatsApp (legacy, NOT used by the app any more) ---
+    # The backend no longer sends WhatsApp messages by itself (the admin
+    # opens WhatsApp from the app via a wa.me link instead), so the
+    # settings below are inert. They are kept only so an existing .env
+    # keeps loading without errors.
+    # Default provider was Meta's WhatsApp Cloud API (the official WhatsApp
     # Business Platform API) — no specific provider was given, and this is
     # the literal "WhatsApp API" rather than a guessed third-party one.
     # WHATSAPP_API_KEY: a permanent access token for your WhatsApp Business app.
@@ -85,10 +76,6 @@ class Settings(BaseSettings):
         if self.CORS_ORIGINS.strip() == "*":
             return ["*"]
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
-
-    @property
-    def admin_user_ids(self) -> List[str]:
-        return [uid.strip() for uid in self.ADMIN_USER_IDS.split(",") if uid.strip()]
 
     @property
     def has_supabase_config(self) -> bool:

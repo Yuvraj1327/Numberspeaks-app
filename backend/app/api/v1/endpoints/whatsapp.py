@@ -1,75 +1,34 @@
 """
-WhatsApp send endpoint (Step 7).
+WhatsApp "opened" record.
 
-Requires the report's bonuses to already be calculated
-(report.status == "completed", from Steps 5-6) — this endpoint only sends
-what was already computed, it never calculates anything itself.
+The backend does NOT send WhatsApp messages. The app opens a wa.me link on
+the admin's own device with the message pre-filled; once that link has
+actually been opened it calls this endpoint so the fact is recorded. The
+record means "the admin opened WhatsApp for this user" — never "sent" or
+"delivered".
 """
 
-import logging
+from fastapi import APIRouter, Depends
+from supabase import Client
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-
-from app.core.auth import AuthUser, can_access_report, get_current_user
-from app.db.supabase_client import SupabaseNotConfiguredError, get_supabase
-from app.schemas.whatsapp import WhatsAppSendSummary
-from app.services.reports_service import get_report
-from app.services.whatsapp_client import WhatsAppNotConfiguredError
-from app.services.whatsapp_service import send_bonus_whatsapp_for_report
-
-logger = logging.getLogger("numberspeaks")
+from app.api.deps import CurrentUser, get_current_user, get_db, get_report_or_404
+from app.schemas.whatsapp import WhatsAppInitiatedRequest, WhatsAppInitiatedResponse
+from app.services.whatsapp_service import record_initiation
 
 router = APIRouter(prefix="/reports", tags=["WhatsApp"])
 
 
 @router.post(
-    "/{report_id}/send-whatsapp",
-    response_model=WhatsAppSendSummary,
-    summary="Send each user's calculated bonus to their WhatsApp number",
+    "/{report_id}/results/{bonus_result_id}/whatsapp-initiated",
+    response_model=WhatsAppInitiatedResponse,
+    summary="Record that WhatsApp was opened with a pre-filled message for this result",
 )
-async def send_whatsapp_for_report(
+async def whatsapp_initiated(
     report_id: str,
-    force: bool = Query(
-        False,
-        description="Resend even to users who already have a successfully sent message for this report.",
-    ),
-    user: AuthUser = Depends(get_current_user),
-) -> WhatsAppSendSummary:
-    try:
-        db = get_supabase()
-    except SupabaseNotConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-
-    try:
-        report = get_report(db, report_id)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to look up report %s", report_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Could not read report from the database: {exc}",
-        ) from exc
-
-    # Someone else's report is reported exactly like a missing one.
-    if report is None or not can_access_report(report, user):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No report found with id {report_id}")
-
-    if report.get("status") != "completed":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Bonuses must be calculated before sending WhatsApp messages "
-                f"(current report status: {report.get('status')!r}). "
-                f"Call POST /api/v1/reports/{report_id}/calculate-bonus first."
-            ),
-        )
-
-    try:
-        return send_bonus_whatsapp_for_report(db, report_id, force=force)
-    except WhatsAppNotConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Unexpected error sending WhatsApp messages for report %s", report_id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error while sending WhatsApp messages: {exc}",
-        ) from exc
+    bonus_result_id: str,
+    payload: WhatsAppInitiatedRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_db),
+) -> WhatsAppInitiatedResponse:
+    get_report_or_404(db, current_user.id, report_id)
+    return record_initiation(db, current_user.id, report_id, bonus_result_id, payload)

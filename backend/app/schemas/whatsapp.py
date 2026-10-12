@@ -1,25 +1,22 @@
-"""Pydantic models for the WhatsApp send endpoint."""
+"""Pydantic models for the "WhatsApp opened" record.
 
-from typing import List, Optional
+The backend never sends WhatsApp messages. The app opens a wa.me link on the
+admin's own device and, only once that has actually been opened, tells the
+backend so it can record the fact. This is NOT a delivery receipt.
+"""
 
-from pydantic import BaseModel
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
-class WhatsAppMessageResult(BaseModel):
+class WhatsAppInitiatedRequest(BaseModel):
+    whatsapp_number: str = Field(..., description="The number the wa.me link was opened for.")
+    message: str = Field(..., min_length=1, max_length=2000, description="The (possibly edited) text that was pre-filled.")
+
+
+class WhatsAppInitiatedResponse(BaseModel):
     bonus_result_id: str
-    user_id: str
-    user_name: str
-    whatsapp_number: Optional[str] = None
-    status: str  # "sent" | "failed" | "skipped_already_sent" | "skipped_no_number" | "skipped_no_bonus"
-    message: Optional[str] = None
-    provider_message_id: Optional[str] = None
-    error: Optional[str] = None
-
-
-class WhatsAppSendSummary(BaseModel):
-    report_id: str
-    total_eligible: int
-    sent_count: int
-    failed_count: int
-    skipped_count: int
-    results: List[WhatsAppMessageResult]
+    whatsapp_status: str = "initiated"
+    whatsapp_initiated_at: Optional[str] = None
+    whatsapp_initiated_count: int = 0

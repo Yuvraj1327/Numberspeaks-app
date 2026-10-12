@@ -29,6 +29,11 @@ class BonusCalculationSummary {
   final int totalInputRecords;
   final int calculatedCount;
   final int failedCount;
+
+  /// Sum of the payable bonuses of this calculation (never includes
+  /// negative balances, which are carried forward instead).
+  final double totalPayable;
+  final int payableUserCount;
   final List<BonusResult> results;
   final List<BonusCalculationError> errors;
 
@@ -38,6 +43,8 @@ class BonusCalculationSummary {
     required this.totalInputRecords,
     required this.calculatedCount,
     required this.failedCount,
+    required this.totalPayable,
+    required this.payableUserCount,
     required this.results,
     required this.errors,
   });
@@ -49,6 +56,8 @@ class BonusCalculationSummary {
       totalInputRecords: json['total_input_records'] as int? ?? 0,
       calculatedCount: json['calculated_count'] as int? ?? 0,
       failedCount: json['failed_count'] as int? ?? 0,
+      totalPayable: toDouble(json['total_payable']),
+      payableUserCount: toInt(json['payable_user_count']),
       results: (json['results'] as List<dynamic>? ?? [])
           .map((e) => BonusResult.fromJson(e as Map<String, dynamic>))
           .toList(),

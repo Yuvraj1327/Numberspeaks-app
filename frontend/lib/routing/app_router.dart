@@ -3,11 +3,15 @@ import 'package:flutter/material.dart';
 import '../models/bonus_result.dart';
 import '../screens/login_screen.dart';
 import '../screens/main_shell.dart';
+import '../screens/rates_screen.dart';
+import '../screens/referrals_screen.dart';
 import '../screens/report_processing_screen.dart';
+import '../screens/report_review_screen.dart';
 import '../screens/report_upload_screen.dart';
 import '../screens/results_screen.dart';
 import '../screens/terms_screen.dart';
 import '../screens/user_detail_screen.dart';
+import '../screens/users_screen.dart';
 import 'app_routes.dart';
 
 /// Central `onGenerateRoute` — every screen is reached only through here, so
@@ -26,6 +30,14 @@ class AppRouter {
 
       case AppRoutes.upload:
         return MaterialPageRoute(builder: (_) => const ReportUploadScreen(), settings: settings);
+
+      case AppRoutes.review:
+        final args = settings.arguments;
+        final reviewArgs = args is ReviewArgs ? args : ReviewArgs(reportId: args as String);
+        return MaterialPageRoute(
+          builder: (_) => ReportReviewScreen(reportId: reviewArgs.reportId, warnings: reviewArgs.warnings),
+          settings: settings,
+        );
 
       case AppRoutes.processing:
         final reportId = settings.arguments as String;
@@ -48,6 +60,19 @@ class AppRouter {
           settings: settings,
         );
 
+      case AppRoutes.referrals:
+        final reportId = settings.arguments as String;
+        return MaterialPageRoute(
+          builder: (_) => ReferralsScreen(reportId: reportId),
+          settings: settings,
+        );
+
+      case AppRoutes.users:
+        return MaterialPageRoute(builder: (_) => const UsersScreen(), settings: settings);
+
+      case AppRoutes.rates:
+        return MaterialPageRoute(builder: (_) => const RatesScreen(), settings: settings);
+
       case AppRoutes.terms:
         return MaterialPageRoute(builder: (_) => const TermsScreen(), settings: settings);
 
@@ -61,13 +86,34 @@ class AppRouter {
   }
 }
 
-/// Arguments for [UserDetailScreen] — the report id (for the WhatsApp/
-/// results API calls) plus the [BonusResult] already fetched on the Results
-/// screen, so the detail screen can render instantly and simply refresh in
-/// the background rather than reshowing a full loading state.
-class UserDetailArgs {
+/// Arguments for [ReportReviewScreen]: the report, plus any warnings the
+/// extraction produced (shown at the top of the review).
+class ReviewArgs {
   final String reportId;
-  final BonusResult initialResult;
+  final List<String> warnings;
 
-  const UserDetailArgs({required this.reportId, required this.initialResult});
+  const ReviewArgs({required this.reportId, this.warnings = const []});
+}
+
+/// Arguments for [UserDetailScreen].
+///
+/// With a [reportId] the screen shows that report's calculation breakdown
+/// for the user (and the Send WhatsApp action). Without one (opened from the
+/// Users list) it shows the user's profile, carried balance and full
+/// calculation history only.
+class UserDetailArgs {
+  final String userId;
+  final String userName;
+  final String? reportId;
+
+  /// The row already loaded by the Results screen, so the detail screen can
+  /// render instantly and refresh in the background.
+  final BonusResult? initialResult;
+
+  const UserDetailArgs({
+    required this.userId,
+    required this.userName,
+    this.reportId,
+    this.initialResult,
+  });
 }

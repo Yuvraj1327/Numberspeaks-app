@@ -1,22 +1,43 @@
 import '../core/api_client.dart';
-import '../models/whatsapp_send_summary.dart';
 
-/// Talks to the /reports/{id}/send-whatsapp endpoint (Step 7 of the
-/// backend). No WhatsApp API logic lives here or anywhere in this app —
-/// this only calls the existing FastAPI endpoint and parses its response.
+/// What the backend answers after recording that WhatsApp was opened.
+class WhatsAppOpenedRecord {
+  final String status;
+  final String? initiatedAt;
+  final int count;
+
+  const WhatsAppOpenedRecord({required this.status, required this.initiatedAt, required this.count});
+
+  factory WhatsAppOpenedRecord.fromJson(Map<String, dynamic> json) {
+    final rawCount = json['whatsapp_initiated_count'];
+    return WhatsAppOpenedRecord(
+      status: json['whatsapp_status'] as String? ?? 'initiated',
+      initiatedAt: json['whatsapp_initiated_at'] as String?,
+      count: rawCount is num ? rawCount.toInt() : 0,
+    );
+  }
+}
+
+/// No WhatsApp message is ever sent through an API. The app opens a `wa.me`
+/// link on the admin's own device, and — only after that link was really
+/// opened — tells the backend so it can record "opened/initiated". This is
+/// NOT a delivery receipt.
 class WhatsAppApiService {
   WhatsAppApiService(this._client);
 
   final ApiClient _client;
 
-  /// POST /api/v1/reports/{report_id}/send-whatsapp?force=..
-  Future<WhatsAppSendSummary> sendWhatsAppForReport(
-    String reportId, {
-    bool force = false,
+  /// POST /api/v1/reports/{report_id}/results/{bonus_result_id}/whatsapp-initiated
+  Future<WhatsAppOpenedRecord> recordOpened({
+    required String reportId,
+    required String bonusResultId,
+    required String whatsappNumber,
+    required String message,
   }) async {
     final json = await _client.post(
-      '/reports/$reportId/send-whatsapp${force ? '?force=true' : ''}',
+      '/reports/$reportId/results/$bonusResultId/whatsapp-initiated',
+      body: {'whatsapp_number': whatsappNumber, 'message': message},
     );
-    return WhatsAppSendSummary.fromJson(json);
+    return WhatsAppOpenedRecord.fromJson(json);
   }
 }

@@ -122,9 +122,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     if (auth.lastError != null) ...[
                       const SizedBox(height: AppSpacing.md),
-                      Text(
+                      const Text(
                         'Invalid email or password. Please try again.',
-                        style: const TextStyle(color: AppTheme.danger),
+                        style: TextStyle(color: AppTheme.danger),
                         textAlign: TextAlign.center,
                       ),
                     ],

@@ -10,9 +10,9 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # Backend access (Supabase Auth only — the FastAPI backend does not yet
-  # verify sessions; see README "Known backend gaps").
-  supabase_flutter: ^2.6.0
+  # Supabase Auth only (login/session). The FastAPI backend verifies the
+  # session token on every request; all data goes through it.
+  supabase_flutter: ^2.17.2
 
   # HTTP client for the FastAPI backend (multipart upload with progress,
   # typed exceptions, timeouts).
@@ -29,7 +29,7 @@ dependencies:
   file_picker: ^8.1.2
 
   # Opens WhatsApp (app or web.whatsapp.com) with a pre-filled message via
-  # a wa.me link — used by the Results screen's "Send WhatsApp" action.
+  # a wa.me link — used by the "Send WhatsApp" action.
   # Never sends anything itself; it only hands off to WhatsApp, which the
   # admin still has to press Send inside.
   url_launcher: ^6.3.1
@@ -37,9 +37,9 @@ dependencies:
   # Number/date formatting for bonus amounts and timestamps.
   intl: ^0.19.0
 
-  # Local, on-device only "last uploaded report id" persistence — used
-  # because the backend has no "list reports" / "latest report" endpoint.
-  # Never used to store bonus data, users, or anything from the server.
+  # No longer used by the app's own code (reports/history now come from the
+  # backend). Kept because supabase_flutter stores its session with it and
+  # removing it needs a pubspec.lock refresh on your side — safe to leave.
   shared_preferences: ^2.3.2
 
   # Reads a real .env file at startup, mirroring the backend's own

@@ -1,0 +1,13 @@
+NUMBERSPEAKS BACKEND - Complete Bonus Management (changes-only)
+
+1. Unzip over your backend project folder (same relative paths; overwrite).
+2. Run supabase/multi_tenant_bonus_schema.sql in the Supabase SQL editor (additive, safe to re-run).
+   Optional, once, BEFORE the first new upload: the "claim legacy data" statements at its bottom.
+3. pip install -r requirements.txt   (and requirements-dev.txt for tests)
+4. python -m pytest                  (143 tests)
+5. Redeploy.
+
+Files you may delete by hand (zips cannot delete; they are now comment-only stubs, harmless):
+  app/services/whatsapp_client.py
+  app/services/whatsapp_templates.py
+Env: only SUPABASE_URL and SUPABASE_KEY (service role, server only). WHATSAPP_* are unused.

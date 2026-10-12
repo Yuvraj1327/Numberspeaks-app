@@ -11,11 +11,11 @@ import 'package:numberspeaks_app/core/api_client.dart';
 import 'package:numberspeaks_app/core/app_theme.dart';
 import 'package:numberspeaks_app/repositories/report_repository.dart';
 import 'package:numberspeaks_app/screens/results_screen.dart';
-import 'package:numberspeaks_app/services/activity_log_store.dart';
 import 'package:numberspeaks_app/services/bonus_api_service.dart';
-import 'package:numberspeaks_app/services/local_report_store.dart';
+import 'package:numberspeaks_app/services/referrals_api_service.dart';
 import 'package:numberspeaks_app/services/reports_api_service.dart';
-import 'package:numberspeaks_app/services/supabase_report_store.dart';
+import 'package:numberspeaks_app/services/settings_api_service.dart';
+import 'package:numberspeaks_app/services/users_api_service.dart';
 import 'package:numberspeaks_app/services/whatsapp_api_service.dart';
 import 'package:provider/provider.dart';
 
@@ -49,10 +49,9 @@ Future<void> main() async {
   final api = ApiClient(dio: Dio(BaseOptions(baseUrl: 'http://fake/api/v1'))..httpClientAdapter = _Fake());
   final repo = ReportRepository(
     reportsApi: ReportsApiService(api), bonusApi: BonusApiService(api),
+    referralsApi: ReferralsApiService(api), usersApi: UsersApiService(api),
+    settingsApi: SettingsApiService(api),
     whatsappApi: WhatsAppApiService(api),
-    localStore: LocalReportStore(userId: () => 'preview'),
-    activityLog: ActivityLogStore(userId: () => 'preview'),
-    currentUserId: () => 'preview', supabaseStore: SupabaseReportStore(),
   );
   runApp(ChangeNotifierProvider<ReportRepository>.value(
     value: repo,

@@ -1,32 +1,56 @@
 """
 Bonus calculation orchestration.
 
-This is the glue between validation (Step 4), the pure formula
-(bonus_calculator.py), and Supabase — it does not contain any formula
-logic itself, and it does not talk to Supabase for anything beyond saving
-the result of a calculation that already happened.
+This is the glue between validation (Step 4), the pure rules
+(bonus_calculator.py) and Supabase — it contains no business rule itself.
 
-Each row is validated and calculated independently in memory: one bad
-row is recorded as an error and skipped, it never stops the rest of the
-report from being calculated. The results are then written to Supabase in
-bulk (one request per batch of rows), not one request per row.
+For one report it:
+  1. validates every row (a bad row is recorded as an error and skipped; it
+     never stops the rest of the report);
+  2. adds up each referrer's referral adjustment from the report's referral
+     entries, separately from personal bonuses;
+  3. looks up each user's carried-forward balance from their most recent
+     earlier calculated period;
+  4. settles each user:  final = previous + personal + referral
+        final > 0  -> payable bonus
+        final <= 0 -> payable 0, a negative final carries forward;
+  5. saves the full breakdown on the row, fills in each referral entry's
+     amount/adjustment, and appends one calculation_history line per user.
+
+Recalculating the same report gives the same numbers (it only reads EARLIER
+reports for previous balances) and adds a new history run each time.
 """
 
 import logging
-from typing import Callable, List, Optional, Tuple
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Dict, List, Tuple
+from uuid import uuid4
 
 from supabase import Client
 
 from app.schemas.bonus import BonusCalculationError, BonusResult
+from app.schemas.report import ExtractedRecord
 from app.schemas.validation import InvalidRecord
-from app.services.bonus_calculator import BonusFormulaNotConfiguredError, BonusInput, calculate_bonus, is_formula_configured
-from app.services.reports_service import (
-    bonus_result_row_to_raw,
-    bulk_update_bonus_results,
-    default_row_reference,
-    safe_error,
-    to_bonus_result,
+from app.services.bonus_calculator import (
+    ZERO,
+    money,
+    personal_adjustment,
+    referral_adjustment,
+    settle_balance,
+    to_decimal,
 )
+from app.services.referral_service import fetch_entry_rows
+from app.services.reports_service import (
+    INSERT_CHUNK,
+    bonus_result_row_to_raw,
+    chunked,
+    default_row_reference,
+    to_bonus_result,
+    update_calculation_status,
+)
+from app.services.settings_service import get_bonus_settings
+from app.services.users_service import previous_balances
 from app.services.validation import validate_record
 
 logger = logging.getLogger("numberspeaks")
@@ -34,122 +58,182 @@ logger = logging.getLogger("numberspeaks")
 
 def run_bonus_calculation(
     db: Client,
+    owner_id: str,
+    report: dict,
     rows: List[dict],
-    heartbeat: Optional[Callable[[], None]] = None,
 ) -> Tuple[int, List[BonusResult], List[BonusCalculationError]]:
     """
-    Validates, calculates, and saves a bonus for each row.
-
-    Returns (calculated_count, results, errors). Raises
-    BonusFormulaNotConfiguredError immediately, before touching any row or
-    the database, if the client's formula hasn't been implemented yet.
+    Validates, calculates and saves a bonus breakdown for each row of
+    `report`. Returns (calculated_count, results, errors).
     """
-    if not is_formula_configured():
-        raise BonusFormulaNotConfiguredError(
-            "No bonus formula has been configured yet. Implement calculate_bonus() "
-            "in app/services/bonus_calculator.py, then set is_formula_configured() "
-            "in the same file to return True."
-        )
-
+    report_id = report["id"]
+    results: List[BonusResult] = []
     errors: List[BonusCalculationError] = []
-    to_calculate: List[Tuple[dict, float]] = []  # (row, bonus amount)
-    invalid_rows: List[dict] = []
 
+    # --- 1. validate every row ------------------------------------------------
+    valid: List[Tuple[dict, ExtractedRecord]] = []
     for row in rows:
         user = row.get("users") or {}
         user_name = user.get("name")
         bonus_result_id = row.get("id")
 
         raw = bonus_result_row_to_raw(row)
-        reference = default_row_reference(raw, 0)
-        outcome = validate_record(raw, reference)
+        outcome = validate_record(raw, default_row_reference(raw, 0))
 
         if outcome is None:
-            # Blank/leftover-header row — shouldn't occur in stored data,
-            # but skip consistently with Step 4 rather than erroring.
-            continue
+            continue  # blank/leftover-header row — ignored, consistent with Step 4
 
         if isinstance(outcome, InvalidRecord):
             errors.append(
-                BonusCalculationError(
-                    bonus_result_id=bonus_result_id, user_name=user_name, issues=outcome.issues
-                )
+                BonusCalculationError(bonus_result_id=bonus_result_id, user_name=user_name, issues=outcome.issues)
             )
-            invalid_rows.append(row)
+            if bonus_result_id:
+                try:
+                    update_calculation_status(db, owner_id, bonus_result_id, "invalid")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Could not persist 'invalid' status for row %s: %s", bonus_result_id, exc)
             continue
 
-        bonus_input = BonusInput(
-            user_name=outcome.user_name,
-            level=outcome.level,
-            casino_pts=outcome.casino_pts,
-            sport_pts=outcome.sport_pts,
-            third_party_pts=outcome.third_party_pts,
-            profit_loss=outcome.profit_loss,
-            ptype=outcome.ptype,
+        valid.append((row, outcome))
+
+    if not valid:
+        return 0, results, errors
+
+    # --- 2. rates, referrals, previous balances --------------------------------
+    settings = get_bonus_settings(db, owner_id)
+    personal_rate = to_decimal(settings.personal_rate)
+
+    profit_loss_by_user: Dict[str, Decimal] = {
+        row["user_id"]: to_decimal(record.profit_loss) for row, record in valid
+    }
+    names_by_user: Dict[str, str] = {
+        row["user_id"]: (row.get("users") or {}).get("name", "") for row, _ in valid
+    }
+
+    referral_by_referrer: Dict[str, Decimal] = {}
+    entry_updates: List[Tuple[str, Decimal, Decimal]] = []
+    for entry in fetch_entry_rows(db, owner_id, report_id):
+        referrer_id = entry["referrer_user_id"]
+        referred_id = entry["referred_user_id"]
+        if referrer_id not in profit_loss_by_user or referred_id not in profit_loss_by_user:
+            errors.append(
+                BonusCalculationError(
+                    bonus_result_id=None,
+                    user_name=names_by_user.get(referrer_id),
+                    issues=[
+                        "A referral entry was skipped because the referrer or the referred user "
+                        "does not have a valid row in this report."
+                    ],
+                )
+            )
+            continue
+        referred_pl = profit_loss_by_user[referred_id]
+        adjustment = referral_adjustment(referred_pl, entry["rate"])
+        referral_by_referrer[referrer_id] = money(referral_by_referrer.get(referrer_id, ZERO) + adjustment)
+        entry_updates.append((entry["id"], referred_pl, adjustment))
+
+    previous = previous_balances(
+        db,
+        owner_id,
+        before_uploaded_at=report.get("uploaded_at"),
+        needed_user_ids=set(profit_loss_by_user),
+    )
+
+    # --- 3. settle + save each user ----------------------------------------------
+    run_id = str(uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    history_rows: List[dict] = []
+    calculated = 0
+
+    for row, record in valid:
+        user_id = row["user_id"]
+        bonus_result_id = row["id"]
+        user_name = (row.get("users") or {}).get("name")
+
+        personal = personal_adjustment(record.profit_loss, personal_rate)
+        settlement = settle_balance(
+            previous.get(user_id, ZERO),
+            personal,
+            referral_by_referrer.get(user_id, ZERO),
         )
 
+        update = {
+            # bonus_amount is what the rest of the system already reads: it
+            # now means "the final PAYABLE bonus" (never negative).
+            "bonus_amount": float(settlement.payable_bonus),
+            "payable_bonus": float(settlement.payable_bonus),
+            "personal_rate_used": float(personal_rate),
+            "personal_adjustment": float(settlement.personal_adjustment),
+            "referral_adjustment": float(settlement.referral_adjustment),
+            "previous_balance": float(settlement.previous_balance),
+            "final_balance": float(settlement.final_balance),
+            "carry_forward_balance": float(settlement.carry_forward_balance),
+            "calculation_status": "calculated",
+            "calculated_at": now,
+        }
+
         try:
-            amount = calculate_bonus(bonus_input)
-        except BonusFormulaNotConfiguredError:
-            raise
+            db.table("bonus_results").update(update).eq("owner_id", owner_id).eq("id", bonus_result_id).execute()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Bonus calculation failed for row %s: %s", bonus_result_id, safe_error(exc))
+            logger.warning("Could not save bonus for %r (row %s): %s", user_name, bonus_result_id, exc)
             errors.append(
                 BonusCalculationError(
                     bonus_result_id=bonus_result_id,
                     user_name=user_name,
-                    issues=[f"Calculation failed: {safe_error(exc)}"],
+                    issues=[f"Calculated but could not be saved: {exc}"],
                 )
             )
-            invalid_rows.append(row)
             continue
 
-        to_calculate.append((row, amount))
-
-    # --- Save: one bulk request per batch, not one per row ------------------
-    def key_fields(row: dict) -> dict:
-        return {
-            "id": row["id"],
-            "report_id": row["report_id"],
-            "user_id": row.get("user_id") or (row.get("users") or {}).get("id"),
-        }
-
-    if invalid_rows:
-        failed_invalid = bulk_update_bonus_results(
-            db,
-            [{**key_fields(row), "calculation_status": "invalid"} for row in invalid_rows],
-            heartbeat,
+        calculated += 1
+        row.update(update)
+        results.append(to_bonus_result(row))
+        history_rows.append(
+            {
+                "owner_id": owner_id,
+                "run_id": run_id,
+                "report_id": report_id,
+                "bonus_result_id": bonus_result_id,
+                "user_id": user_id,
+                "profit_loss": float(to_decimal(record.profit_loss)),
+                "personal_rate": float(personal_rate),
+                "personal_adjustment": float(settlement.personal_adjustment),
+                "referral_adjustment": float(settlement.referral_adjustment),
+                "previous_balance": float(settlement.previous_balance),
+                "final_balance": float(settlement.final_balance),
+                "payable_bonus": float(settlement.payable_bonus),
+                "carry_forward_balance": float(settlement.carry_forward_balance),
+                "calculated_at": now,
+            }
         )
-        if failed_invalid:
-            logger.warning("Could not persist 'invalid' status for %d rows", len(failed_invalid))
 
-    failed_ids = set()
-    if to_calculate:
-        failed = bulk_update_bonus_results(
-            db,
-            [
-                {**key_fields(row), "bonus_amount": amount, "calculation_status": "calculated"}
-                for row, amount in to_calculate
-            ],
-            heartbeat,
-        )
-        failed_ids = {change["id"] for change in failed}
-        if failed_ids:
-            logger.warning("Could not save bonus for %d rows", len(failed_ids))
-
-    results: List[BonusResult] = []
-    for row, amount in to_calculate:
-        if row["id"] in failed_ids:
+    # --- 4. referral entries + history (best effort, reported if they fail) ----------
+    for entry_id, amount, adjustment in entry_updates:
+        try:
+            db.table("referral_entries").update(
+                {"amount": float(amount), "adjustment": float(adjustment), "calculated_at": now}
+            ).eq("owner_id", owner_id).eq("id", entry_id).execute()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not save referral entry %s: %s", entry_id, exc)
             errors.append(
                 BonusCalculationError(
-                    bonus_result_id=row["id"],
-                    user_name=(row.get("users") or {}).get("name"),
-                    issues=[f"Calculated ({amount}) but could not be saved"],
+                    bonus_result_id=None,
+                    user_name=None,
+                    issues=[f"A referral entry was applied but its amount could not be saved: {exc}"],
                 )
             )
-            continue
-        row["bonus_amount"] = amount
-        row["calculation_status"] = "calculated"
-        results.append(to_bonus_result(row))
 
-    return len(results), results, errors
+    for chunk in chunked(history_rows, INSERT_CHUNK):
+        try:
+            db.table("calculation_history").insert(chunk).execute()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not save calculation history: %s", exc)
+            errors.append(
+                BonusCalculationError(
+                    bonus_result_id=None,
+                    user_name=None,
+                    issues=[f"Bonuses were saved but part of the calculation history could not be recorded: {exc}"],
+                )
+            )
+
+    return calculated, results, errors

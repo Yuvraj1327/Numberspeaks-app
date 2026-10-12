@@ -1,4 +1,3 @@
-import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,19 +6,18 @@ import '../core/app_theme.dart';
 import '../core/formatters.dart';
 import '../core/report_actions.dart';
 import '../models/report_status.dart';
+import '../models/report_summary.dart';
 import '../repositories/report_repository.dart';
 import '../routing/app_routes.dart';
-import '../services/local_report_store.dart';
 import '../widgets/empty_view.dart';
+import '../widgets/error_view.dart';
 import '../widgets/loading_view.dart';
-import '../widgets/screen_header.dart';
 import '../widgets/status_pill.dart';
 
-/// Reports tab (embedded inside [MainShell]).
-///
-/// "Recent uploaded reports" is this device's own upload history (see
-/// LocalReportStore — the backend has no list-reports endpoint), each with
-/// its last known status and a status-appropriate continue/view action.
+/// Reports tab (embedded inside [MainShell]): the full report history of the
+/// logged-in admin. It is loaded from the backend (stored in Supabase), so
+/// it is the same after a refresh, after logging out and in again, and on
+/// any other device.
 class ReportsTab extends StatefulWidget {
   const ReportsTab({super.key});
 
@@ -29,79 +27,50 @@ class ReportsTab extends StatefulWidget {
 
 class _ReportsTabState extends State<ReportsTab> {
   bool _loading = true;
-  List<LocalReportEntry> _reports = [];
-
-  late final ReportRepository _repo;
-
-  @override
-  void initState() {
-    super.initState();
-    _repo = context.read<ReportRepository>()..addListener(_onRepoChanged);
-    _load();
-  }
+  String? _errorMessage;
+  List<ReportSummary> _reports = [];
+  int _seenRevision = -1;
 
   @override
-  void dispose() {
-    _repo.removeListener(_onRepoChanged);
-    super.dispose();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final revision = context.watch<ReportRepository>().revision;
+    if (revision != _seenRevision) {
+      final first = _seenRevision == -1;
+      _seenRevision = revision;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load(silent: !first);
+      });
+    }
   }
 
-  /// An upload / status change elsewhere in the app: re-read the list.
-  void _onRepoChanged() {
-    if (mounted) _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    final repo = context.read<ReportRepository>();
-    final reports = await repo.getRecentReports();
-    if (!mounted) return;
-    setState(() {
-      _reports = reports;
-      _loading = false;
-    });
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _errorMessage = null;
+      });
+    }
+    try {
+      final reports = await context.read<ReportRepository>().listReports();
+      if (!mounted) return;
+      setState(() {
+        _reports = reports;
+        _loading = false;
+        _errorMessage = null;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        if (!silent || _reports.isEmpty) _errorMessage = e.userMessage;
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _openUpload() async {
     await Navigator.of(context).pushNamed(AppRoutes.upload);
-    // The upload screen may have created a new report while this tab sat
-    // underneath it — refresh the list on return rather than assuming.
-    _load();
-  }
-
-  /// Asks first, then permanently deletes the report (PDF, results and
-  /// WhatsApp history) on the backend. The repository notifies on success,
-  /// which reloads this list and the other tabs.
-  Future<void> _confirmAndDelete(LocalReportEntry report) async {
-    final name = report.fileName.isNotEmpty ? report.fileName : 'this report';
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete report?'),
-        content: Text(
-          'This permanently deletes $name, its PDF and all of its bonus results. '
-          'This cannot be undone.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await _repo.deleteReport(report.reportId);
-      messenger.showSnackBar(const SnackBar(content: Text('Report deleted.')));
-    } on ApiException catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(e.userMessage), backgroundColor: AppTheme.danger),
-      );
-    }
+    if (mounted) _load(silent: true);
   }
 
   @override
@@ -109,11 +78,9 @@ class _ReportsTabState extends State<ReportsTab> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: const EdgeInsets.all(AppSpacing.md),
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          const ScreenHeader(eyebrow: 'Your uploads', title: 'Reports'),
-          const SizedBox(height: AppSpacing.lg),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -123,24 +90,28 @@ class _ReportsTabState extends State<ReportsTab> {
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
-          const SectionTitle('Recent Reports'),
-          const SizedBox(height: AppSpacing.md),
+          Text('Report history', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: AppSpacing.sm),
           if (_loading)
             const Padding(
               padding: EdgeInsets.only(top: AppSpacing.xl),
               child: LoadingView(),
+            )
+          else if (_errorMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.lg),
+              child: ErrorView(message: _errorMessage!, onRetry: _load),
             )
           else if (_reports.isEmpty)
             const Padding(
               padding: EdgeInsets.only(top: AppSpacing.xl),
               child: EmptyView(
                 icon: Icons.folder_open_outlined,
-                message: 'No reports uploaded yet on this device.\nUpload a PDF report to get started.',
+                message: 'No reports uploaded yet.\nUpload a PDF report to get started.',
               ),
             )
           else
-            for (final report in _reports)
-              _ReportCard(report: report, onDelete: () => _confirmAndDelete(report)),
+            for (final report in _reports) ReportCard(report: report),
           const SizedBox(height: AppSpacing.xl),
         ],
       ),
@@ -148,90 +119,87 @@ class _ReportsTabState extends State<ReportsTab> {
   }
 }
 
-class _ReportCard extends StatelessWidget {
-  final LocalReportEntry report;
-  final VoidCallback onDelete;
+/// One report in the history. Also used by the Dashboard's recent list.
+class ReportCard extends StatelessWidget {
+  final ReportSummary report;
 
-  const _ReportCard({required this.report, required this.onDelete});
+  const ReportCard({super.key, required this.report});
 
   @override
   Widget build(BuildContext context) {
     final action = resolveNextAction(report.status);
-    final dateLabel = DateFormat.yMMMd().add_jm().format(report.updatedAt);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: Card(
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg - 4),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  const IconBadge(icon: Icons.picture_as_pdf_outlined, color: AppTheme.primary),
-                  const SizedBox(width: AppSpacing.md - 2),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceMuted,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.picture_as_pdf_outlined, color: AppTheme.primary),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(
                       report.fileName.isNotEmpty ? report.fileName : 'Report',
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w600),
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                     ),
                   ),
                   StatusPill.forReportStatus(ReportStatus.fromString(report.status)),
-                  IconButton(
-                    tooltip: 'Delete report',
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline, color: AppTheme.danger),
-                  ),
                 ],
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpacing.xs),
               Row(
                 children: [
-                  Text(
-                    dateLabel,
-                    style: Theme.of(context).textTheme.bodySmall,
+                  Flexible(
+                    child: Text(
+                      Formatters.dateTime(report.uploadedAt),
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
+                    ),
                   ),
-                  if (report.userCount != null) ...[
+                  if (report.userCount > 0) ...[
                     const SizedBox(width: AppSpacing.sm),
-                    const Text('•', style: TextStyle(color: AppTheme.textMuted)),
+                    const Text('•', style: TextStyle(color: Colors.black38)),
                     const SizedBox(width: AppSpacing.sm),
                     Text(
                       '${report.userCount} user(s)',
-                      style: Theme.of(context).textTheme.bodySmall,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
                     ),
                   ],
                 ],
               ),
-              if (report.status == 'completed' &&
-                  report.bonusEligibleCount != null &&
-                  report.totalBonus != null) ...[
-                const SizedBox(height: AppSpacing.md),
+              if (report.isCompleted && report.totalPayable != null) ...[
+                const SizedBox(height: AppSpacing.sm),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md - 2, vertical: AppSpacing.md - 4),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
                   decoration: BoxDecoration(
-                    color: AppTheme.teal.withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(14),
+                    color: AppTheme.teal.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
-                    '${report.bonusEligibleCount} of ${report.userCount ?? report.bonusEligibleCount} '
-                    'user(s) bonus-eligible • ${Formatters.amount(report.totalBonus!)} total bonus',
-                    style: const TextStyle(color: AppTheme.teal, fontWeight: FontWeight.w600, fontSize: 13),
+                    '${report.payableUserCount} of ${report.userCount} user(s) payable • '
+                    '${Formatters.rupees(report.totalPayable!)} total payable',
+                    style: const TextStyle(color: AppTheme.teal, fontWeight: FontWeight.w600, fontSize: 12.5),
                   ),
                 ),
               ],
-              const SizedBox(height: AppSpacing.md),
-              SizedBox(
-                width: double.infinity,
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: Alignment.centerRight,
                 child: OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context)
-                      .pushNamed(action.route, arguments: report.reportId),
+                  onPressed: () => Navigator.of(context).pushNamed(action.route, arguments: report.reportId),
                   icon: Icon(action.icon, size: 18),
                   label: Text(action.label),
                 ),
