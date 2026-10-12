@@ -68,6 +68,13 @@ class ReportRepository extends ChangeNotifier {
 
   Future<ReportSummary> getReport(String reportId) => _reportsApi.getReport(reportId);
 
+  /// Deletes a report on the backend (ownership is enforced there). Throws an
+  /// [ApiException] if it could not be deleted — callers must then keep it.
+  Future<void> deleteReport(String reportId) async {
+    await _reportsApi.deleteReport(reportId);
+    _changed();
+  }
+
   Future<UploadReportResponse> uploadReport({
     required List<int> fileBytes,
     required String fileName,

@@ -181,6 +181,38 @@ def later_report_is_completed(db: Client, owner_id: str, report: dict) -> bool:
     return bool(res.data)
 
 
+def delete_report(db: Client, owner_id: str, report: dict) -> bool:
+    """
+    Deletes one of this admin's reports and everything that belongs to it.
+
+    The reports row is deleted first, in a single statement, so the database's
+    ON DELETE CASCADE removes its bonus_results (and their WhatsApp records),
+    referral_entries and calculation_history atomically — either all of it goes
+    or, on an error, nothing does. The explicit deletes after it are scoped to
+    the same owner and report and only mop up if a cascade is missing.
+    Users are never touched: they are shared with the admin's other reports.
+
+    The stored PDF is removed last and best-effort: the report is already gone
+    by then, and a leftover file is harmless. Returns False if that file could
+    not be removed.
+    """
+    report_id = report["id"]
+    db.table("reports").delete().eq("owner_id", owner_id).eq("id", report_id).execute()
+    for table in ("calculation_history", "referral_entries", "bonus_results"):
+        db.table(table).delete().eq("owner_id", owner_id).eq("report_id", report_id).execute()
+
+    file_path = report.get("file_path") or ""
+    # Only ever remove a file stored under this report's own folder.
+    if not file_path.startswith(f"{report_id}/"):
+        return True
+    try:
+        db.storage.from_(REPORTS_BUCKET).remove([file_path])
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Report %s deleted but its PDF could not be removed: %s", report_id, safe_error(exc))
+        return False
+
+
 def upload_pdf_to_storage(db: Client, report_id: str, file_name: str, file_bytes: bytes) -> str:
     """
     Uploads the raw PDF to Supabase Storage and returns its storage path.

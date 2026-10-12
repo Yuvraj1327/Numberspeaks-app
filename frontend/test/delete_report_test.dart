@@ -17,11 +17,9 @@ import 'package:numberspeaks_app/services/users_api_service.dart';
 import 'package:numberspeaks_app/services/whatsapp_api_service.dart';
 import 'package:provider/provider.dart';
 
-// Report deletion was retired in the "Complete Bonus Management" update (the
-// backend has no DELETE /reports endpoint and the Reports tab has no delete
-// button). This file now covers the Reports tab's current behaviour: the
-// history comes from the backend, shows no delete control, and a failed load
-// can be retried.
+// Reports tab: the history comes from the backend, a report can be deleted
+// after confirming (and only then), failures keep the report, and a failed
+// load can be retried.
 class _FakeBackend implements HttpClientAdapter {
   final reports = <Map<String, dynamic>>[
     {
@@ -34,11 +32,20 @@ class _FakeBackend implements HttpClientAdapter {
     },
   ];
   bool failing = false;
+  int deleteStatus = 204;
   final methods = <String>[];
 
   @override
   Future<ResponseBody> fetch(RequestOptions o, Stream<Uint8List>? r, Future<void>? c) async {
     methods.add(o.method);
+    if (o.method == 'DELETE') {
+      if (deleteStatus == 204) reports.removeWhere((r) => o.path.endsWith('/${r['report_id']}'));
+      return ResponseBody.fromString(
+        deleteStatus == 204 ? '' : jsonEncode({'detail': 'A newer report has already been calculated.'}),
+        deleteStatus,
+        headers: {Headers.contentTypeHeader: ['application/json']},
+      );
+    }
     if (failing) {
       return ResponseBody.fromString(
         jsonEncode({'detail': 'Something went wrong.'}),
@@ -85,10 +92,37 @@ void main() {
     expect(find.text('bonus.pdf'), findsOneWidget);
   });
 
-  testWidgets('reports cannot be deleted from the Reports tab', (tester) async {
+  testWidgets('cancelling the confirmation deletes nothing', (tester) async {
     await pumpTab(tester);
-    expect(find.byTooltip('Delete report'), findsNothing);
+    await tester.tap(find.byTooltip('Delete report'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete this report?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('bonus.pdf'), findsOneWidget);
     expect(backend.methods, everyElement('GET'));
+  });
+
+  testWidgets('confirming deletes the report and removes it immediately', (tester) async {
+    await pumpTab(tester);
+    await tester.tap(find.byTooltip('Delete report'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    expect(backend.methods, contains('DELETE'));
+    expect(find.text('bonus.pdf'), findsNothing);
+    expect(find.text('Report deleted.'), findsOneWidget);
+  });
+
+  testWidgets('a refused deletion keeps the report and says why', (tester) async {
+    backend.deleteStatus = 409;
+    await pumpTab(tester);
+    await tester.tap(find.byTooltip('Delete report'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    expect(find.text('bonus.pdf'), findsOneWidget);
+    expect(find.textContaining('A newer report has already been calculated'), findsOneWidget);
   });
 
   testWidgets('a failed load shows an error and "Try again" recovers', (tester) async {

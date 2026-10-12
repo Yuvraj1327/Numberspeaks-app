@@ -260,6 +260,12 @@ class _Bucket:
             raise RuntimeError("bucket does not exist")
         self.store[path] = data
 
+    def remove(self, paths):
+        if self.fail:
+            raise RuntimeError("storage unavailable")
+        for path in paths:
+            self.store.pop(path, None)
+
 
 class _Storage:
     def __init__(self, db: "FakeSupabase"):

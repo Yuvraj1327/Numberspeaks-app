@@ -20,7 +20,7 @@ import logging
 from typing import List
 
 from fastapi.concurrency import run_in_threadpool
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from supabase import Client
 
 from app.api.deps import CurrentUser, assert_report_modifiable, get_current_user, get_db, get_report_or_404
@@ -34,6 +34,7 @@ from app.services.reports_service import (
     bonus_result_row_to_raw,
     create_report,
     default_row_reference,
+    delete_report,
     get_bonus_results_for_report,
     list_reports,
     save_extracted_records,
@@ -68,6 +69,27 @@ def get_one_report(
     db: Client = Depends(get_db),
 ) -> ReportSummary:
     return to_report_summary(get_report_or_404(db, current_user.id, report_id))
+
+
+@router.delete(
+    "/{report_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete one of this admin's reports with its results, records and stored PDF",
+)
+def delete_one_report(
+    report_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_db),
+) -> Response:
+    with report_busy_guard(report_id, "deletion"):
+        # 404 for a missing report AND for another admin's: existence is never revealed.
+        report = get_report_or_404(db, current_user.id, report_id)
+        if report.get("status") == "completed":
+            # A later period's carried-forward balances were computed from this
+            # one, so it can only go once no newer report is calculated.
+            assert_report_modifiable(db, current_user.id, report)
+        delete_report(db, current_user.id, report)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/upload", response_model=UploadReportResponse, summary="Upload and extract a report PDF")

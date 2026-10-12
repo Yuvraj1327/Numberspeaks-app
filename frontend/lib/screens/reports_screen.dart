@@ -69,6 +69,65 @@ class _ReportsTabState extends State<ReportsTab> {
     }
   }
 
+  final Set<String> _deleting = {};
+
+  Future<void> _confirmDelete(ReportSummary report) async {
+    final name = report.fileName.isNotEmpty ? report.fileName : 'this report';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this report?'),
+        content: Text(
+          '"$name" will be permanently deleted together with its extracted rows, '
+          'bonus results, referral entries, calculation history and the stored PDF. '
+          'This cannot be undone. Your other reports are not affected.',
+        ),
+        actions: [
+          TextButton(autofocus: true, onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || _deleting.contains(report.reportId)) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final repo = context.read<ReportRepository>();
+    setState(() => _deleting.add(report.reportId));
+    String? failure;
+    var gone = false;
+    try {
+      await repo.deleteReport(report.reportId);
+      gone = true;
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.notFound) {
+        gone = true; // already deleted elsewhere
+      } else if (e.kind == ApiErrorKind.timeout) {
+        // No answer is not a failure: check whether it went through.
+        try {
+          final remaining = await repo.listReports();
+          gone = !remaining.any((r) => r.reportId == report.reportId);
+        } on ApiException {
+          // Still unknown.
+        }
+        if (!gone) failure = 'Could not confirm the deletion in time. Refresh to check, then try again.';
+      } else {
+        failure = e.userMessage;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _deleting.remove(report.reportId);
+      if (gone) _reports = _reports.where((r) => r.reportId != report.reportId).toList();
+    });
+    messenger.showSnackBar(SnackBar(
+      content: Text(gone ? 'Report deleted.' : 'Could not delete the report. ${failure ?? ''}'.trim()),
+    ));
+  }
+
   Future<void> _openUpload() async {
     await Navigator.of(context).pushNamed(AppRoutes.upload);
     if (mounted) _load(silent: true);
@@ -114,7 +173,12 @@ class _ReportsTabState extends State<ReportsTab> {
               ),
             )
           else
-            for (final report in _reports) ReportCard(report: report),
+            for (final report in _reports)
+              ReportCard(
+                report: report,
+                deleting: _deleting.contains(report.reportId),
+                onDelete: () => _confirmDelete(report),
+              ),
           const SizedBox(height: AppSpacing.xl),
         ],
       ),
@@ -126,7 +190,12 @@ class _ReportsTabState extends State<ReportsTab> {
 class ReportCard extends StatelessWidget {
   final ReportSummary report;
 
-  const ReportCard({super.key, required this.report});
+  /// When set, a Delete button is shown (Reports tab). [deleting] disables
+  /// the card's buttons while the request is running.
+  final VoidCallback? onDelete;
+  final bool deleting;
+
+  const ReportCard({super.key, required this.report, this.onDelete, this.deleting = false});
 
   @override
   Widget build(BuildContext context) {
@@ -192,13 +261,36 @@ class ReportCard extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: AppSpacing.sm),
-              Align(
-                alignment: Alignment.centerRight,
-                child: OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).pushNamed(action.route, arguments: report.reportId),
-                  icon: Icon(action.icon, size: 18),
-                  label: Text(action.label),
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (onDelete != null) ...[
+                    deleting
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                          )
+                        : IconButton(
+                            tooltip: 'Delete report',
+                            icon: const Icon(Icons.delete_outline, color: AppTheme.danger),
+                            onPressed: onDelete,
+                          ),
+                    const SizedBox(width: AppSpacing.xs),
+                  ],
+                  // Expanded: the theme's buttons are full-width, which a Row needs bounded.
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: OutlinedButton.icon(
+                        onPressed: deleting
+                            ? null
+                            : () => Navigator.of(context).pushNamed(action.route, arguments: report.reportId),
+                        icon: Icon(action.icon, size: 18),
+                        label: Text(action.label),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

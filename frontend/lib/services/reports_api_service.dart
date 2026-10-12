@@ -25,6 +25,10 @@ class ReportsApiService {
     return ReportSummary.fromJson(json);
   }
 
+  /// DELETE /api/v1/reports/{report_id} — removes the report, its results,
+  /// referral/history records and stored PDF. Answers 204.
+  Future<void> deleteReport(String reportId) => _client.delete('/reports/$reportId');
+
   /// POST /api/v1/reports/upload
   Future<UploadReportResponse> uploadReport({
     required List<int> fileBytes,
