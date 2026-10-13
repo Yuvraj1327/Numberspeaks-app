@@ -136,7 +136,7 @@ class ClientPdfTests(PipelineTestCase):
             expected_bonus = round(abs(want.profit_loss) * 0.03, 2) if want.profit_loss < 0 else 0.0
             self.assertEqual(got["bonus_amount"], expected_bonus)
             self.assertEqual(got["calculation_status"], "calculated")
-            self.assertEqual(got["whatsapp_status"], "not_sent")
+            self.assertEqual(got["send_status"], "pending")
         self.assertEqual(len(self.db.tables["bonus_results"]), len(self.expected.records))
 
         # Request budget: a handful of calls, not per-user calls.

@@ -36,7 +36,7 @@ COLUMNS: Dict[str, Tuple[str, ...]] = {
         "id", "report_id", "user_id", "casino_pts", "sport_pts", "third_party_pts", "profit_loss", "ptype",
         "bonus_amount", "calculation_status", "created_at", "personal_rate_used", "personal_adjustment",
         "referral_adjustment", "previous_balance", "final_balance", "payable_bonus", "carry_forward_balance",
-        "calculated_at", "whatsapp_initiated_at", "whatsapp_initiated_count",
+        "calculated_at", "whatsapp_send_status", "whatsapp_send_error", "whatsapp_sent_at",
     ),
     "referrers": ("id", "user_id", "display_name", "notes", "default_rate", "is_active", "created_at"),
     "referral_entries": (

@@ -57,14 +57,13 @@ class BonusResult(BaseModel):
     )
     calculated_at: Optional[str] = None
 
-    # --- WhatsApp (the app only OPENS wa.me; nothing is sent via an API) --
-    whatsapp_status: str = Field(
-        "not_sent",
-        description="'not_sent' or 'initiated' (the admin opened WhatsApp with the message "
-        "pre-filled). It is NEVER 'sent'/'delivered' — the backend cannot know that.",
+    # --- WhatsApp sending via No1API (latest attempt) ---------------------
+    send_status: str = Field(
+        "pending",
+        description="'pending' (never attempted), 'sending', 'sent' (provider confirmed) or 'failed' (retryable).",
     )
-    whatsapp_initiated_at: Optional[str] = None
-    whatsapp_initiated_count: int = 0
+    send_error: Optional[str] = None
+    sent_at: Optional[str] = None
 
     # --- Referral link for this period (who referred this user / how many they referred)
     referrer_user_id: Optional[str] = None

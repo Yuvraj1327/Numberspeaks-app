@@ -49,8 +49,8 @@ def test_b_cannot_see_or_edit_a_users(world, b):
 
 def test_b_cannot_record_whatsapp_for_a_result(world, b):
     rid, row = world["rid"], world["rows"]["Boss"]
-    r = b.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-initiated",
-               json={"whatsapp_number": "919876543210", "message": "hi"})
+    r = b.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-send",
+               json={"message": "hi"})
     assert r.status_code == 404
 
 

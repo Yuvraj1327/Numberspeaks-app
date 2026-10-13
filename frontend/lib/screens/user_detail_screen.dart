@@ -204,15 +204,13 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
     final result = _result;
     final number = _number;
     if (result == null || number == null) return;
-    final updated = await showWhatsAppMessageDialog(
+    final outcome = await showWhatsAppMessageDialog(
       context,
       result: result.copyWith(whatsappNumber: number),
     );
-    if (updated == null || !mounted) return;
-    setState(() => _result = updated);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('WhatsApp opened. Recorded as "Opened" — not as sent.')),
-    );
+    if (outcome == null || !mounted) return;
+    if (outcome.result != null) setState(() => _result = outcome.result);
+    if (outcome.refresh) _load();
   }
 
   @override
@@ -594,20 +592,25 @@ class _WhatsAppCard extends StatelessWidget {
     required this.onSend,
   });
 
-  /// What has actually happened: WhatsApp was opened (n times), or not yet.
-  /// Never "sent" or "delivered" — that cannot be known.
-  static String _openedText(BonusResult r) {
-    if (!r.whatsappInitiated) return 'Not opened yet';
-    final count = r.whatsappInitiatedCount > 0 ? r.whatsappInitiatedCount : 1;
-    final at = r.whatsappInitiatedAt == null ? null : DateTime.tryParse(r.whatsappInitiatedAt!)?.toLocal();
-    final when = at == null ? '' : ', last on ${Formatters.dateTime(at)}';
-    return 'Opened $count time(s)$when';
+  /// The latest send status as the backend recorded it.
+  static String _statusText(BonusResult r) {
+    switch (r.sendStatus) {
+      case 'sent':
+        final at = r.sentAt == null ? null : DateTime.tryParse(r.sentAt!)?.toLocal();
+        return at == null ? 'Sent' : 'Sent on ${Formatters.dateTime(at)}';
+      case 'sending':
+        return 'Sending (not finished)';
+      case 'failed':
+        return 'Failed${r.sendError == null ? '' : ': ${r.sendError}'}';
+      default:
+        return 'Pending';
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final r = result;
-    final canSend = r != null && r.hasPayableBonus && number != null;
+    final canSend = r != null && r.hasPayableBonus && number != null && !r.isSent;
 
     String? reason;
     if (r != null && !r.hasPayableBonus) {
@@ -651,7 +654,7 @@ class _WhatsAppCard extends StatelessWidget {
             if (r != null) ...[
               const SizedBox(height: AppSpacing.xs),
               Text(
-                _openedText(r),
+                _statusText(r),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -662,7 +665,7 @@ class _WhatsAppCard extends StatelessWidget {
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.send_outlined, size: 18),
-                label: const Text('Send WhatsApp'),
+                label: Text(r.isSent ? 'Sent' : (r.isSendFailed || r.isSending) ? 'Retry send' : 'Auto Send WhatsApp'),
               ),
               if (reason != null)
                 Padding(

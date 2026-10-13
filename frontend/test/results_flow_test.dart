@@ -93,7 +93,7 @@ Map<String, dynamic> _row(String id, String report, String name, double pl, doub
       'ptype': 'Credit',
       'bonus_amount': bonus,
       'calculation_status': 'calculated',
-      'whatsapp_status': 'not_sent',
+      'send_status': 'pending',
       'created_at': '2026-10-02T10:00:00+00:00',
     };
 

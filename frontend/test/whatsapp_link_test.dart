@@ -25,25 +25,5 @@ void main() {
       expect(WhatsAppLink.isUsableNumber(''), isFalse);
       expect(WhatsAppLink.isUsableNumber('1' * 16), isFalse);
     });
-
-    test('build makes a prefilled wa.me link with the saved number', () {
-      const message = "Hi Rahul01, you've got ₹30.00 bonus. Please enjoy your game!";
-      final uri = WhatsAppLink.build(number: '+91 98765-43210', message: message);
-
-      expect(uri.scheme, 'https');
-      expect(uri.host, 'wa.me');
-      expect(uri.path, '/919876543210');
-      // The text round-trips exactly, including the rupee sign and apostrophe.
-      expect(uri.queryParameters['text'], message);
-      // Spaces are %20 (not +), the rupee sign is UTF-8 percent-encoded.
-      expect(uri.toString(), contains('%20'));
-      expect(uri.toString(), contains('%E2%82%B9'));
-      expect(uri.toString(), isNot(contains('+')));
-    });
-
-    test('an edited message is what ends up in the link', () {
-      final uri = WhatsAppLink.build(number: '919876543210', message: 'Edited by the admin & sent');
-      expect(uri.queryParameters['text'], 'Edited by the admin & sent');
-    });
   });
 }

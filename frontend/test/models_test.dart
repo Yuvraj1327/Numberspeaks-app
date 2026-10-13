@@ -26,8 +26,7 @@ Map<String, dynamic> _row({Map<String, dynamic> overrides = const {}}) {
     'final_balance': 30,
     'payable_bonus': 30,
     'carry_forward_balance': 0,
-    'whatsapp_status': 'not_sent',
-    'whatsapp_initiated_count': 0,
+    'send_status': 'pending',
     ...overrides,
   };
 }
@@ -46,7 +45,8 @@ void main() {
       expect(r.payable, 30);
       expect(r.hasPayableBonus, isTrue);
       expect(r.hasWhatsAppNumber, isFalse);
-      expect(r.whatsappInitiated, isFalse);
+      expect(r.sendStatus, 'pending');
+      expect(r.isSent, isFalse);
     });
 
     test('a negative balance has nothing payable and is carried forward', () {
@@ -82,14 +82,23 @@ void main() {
       expect(r.hasPayableBonus, isFalse);
     });
 
-    test('WhatsApp "initiated" means opened, with a count', () {
+    test('send status, error and time come from the backend', () {
       final r = BonusResult.fromJson(_row(overrides: {
-        'whatsapp_status': 'initiated',
-        'whatsapp_initiated_count': 2,
-        'whatsapp_initiated_at': '2026-10-12T10:00:00+00:00',
+        'send_status': 'failed',
+        'send_error': 'provider said no',
       }));
-      expect(r.whatsappInitiated, isTrue);
-      expect(r.whatsappInitiatedCount, 2);
+      expect(r.isSendFailed, isTrue);
+      expect(r.isSent, isFalse);
+      expect(r.sendError, 'provider said no');
+
+      final sent = BonusResult.fromJson(_row(overrides: {
+        'send_status': 'sent',
+        'sent_at': '2026-10-12T10:00:00+00:00',
+      }));
+      expect(sent.isSent, isTrue);
+      expect(sent.sentAt, '2026-10-12T10:00:00+00:00');
+      expect(sent.copyWith(sendStatus: 'failed', sendError: 'x').sendError, 'x');
+      expect(sent.copyWith(clearSendError: true).sendError, isNull);
     });
 
     test('copyWith sets and clears the WhatsApp number', () {

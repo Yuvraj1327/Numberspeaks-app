@@ -35,11 +35,11 @@ class BonusResult {
   final double? carryForwardBalance;
   final String? calculatedAt;
 
-  /// 'not_sent' or 'initiated'. 'initiated' only means the admin opened
-  /// WhatsApp with the message pre-filled — it is never "sent"/"delivered".
-  final String whatsappStatus;
-  final String? whatsappInitiatedAt;
-  final int whatsappInitiatedCount;
+  /// Latest WhatsApp send attempt: 'pending' (never attempted), 'sending',
+  /// 'sent' (the provider confirmed) or 'failed' (can be retried).
+  final String sendStatus;
+  final String? sendError;
+  final String? sentAt;
 
   final String? createdAt;
 
@@ -69,9 +69,9 @@ class BonusResult {
     required this.payableBonus,
     required this.carryForwardBalance,
     required this.calculatedAt,
-    required this.whatsappStatus,
-    required this.whatsappInitiatedAt,
-    required this.whatsappInitiatedCount,
+    required this.sendStatus,
+    required this.sendError,
+    required this.sentAt,
     required this.createdAt,
     this.referrerUserId,
     this.referrerName,
@@ -89,18 +89,21 @@ class BonusResult {
 
   bool get hasWhatsAppNumber => whatsappNumber != null && whatsappNumber!.trim().isNotEmpty;
 
-  bool get whatsappInitiated => whatsappStatus == 'initiated' || whatsappInitiatedCount > 0;
+  bool get isSent => sendStatus == 'sent';
+  bool get isSending => sendStatus == 'sending';
+  bool get isSendFailed => sendStatus == 'failed';
 
   /// A copy with the fields the app changes locally after a successful save
-  /// (a new WhatsApp number, or a WhatsApp "opened" record). Everything else
+  /// (a new WhatsApp number, or a new send status). Everything else
   /// is carried over unchanged. [clearWhatsAppNumber] sets the number to null
   /// (a null [whatsappNumber] argument means "leave as is").
   BonusResult copyWith({
     String? whatsappNumber,
     bool clearWhatsAppNumber = false,
-    String? whatsappStatus,
-    String? whatsappInitiatedAt,
-    int? whatsappInitiatedCount,
+    String? sendStatus,
+    String? sendError,
+    bool clearSendError = false,
+    String? sentAt,
   }) {
     return BonusResult(
       bonusResultId: bonusResultId,
@@ -123,9 +126,9 @@ class BonusResult {
       payableBonus: payableBonus,
       carryForwardBalance: carryForwardBalance,
       calculatedAt: calculatedAt,
-      whatsappStatus: whatsappStatus ?? this.whatsappStatus,
-      whatsappInitiatedAt: whatsappInitiatedAt ?? this.whatsappInitiatedAt,
-      whatsappInitiatedCount: whatsappInitiatedCount ?? this.whatsappInitiatedCount,
+      sendStatus: sendStatus ?? this.sendStatus,
+      sendError: clearSendError ? null : (sendError ?? this.sendError),
+      sentAt: sentAt ?? this.sentAt,
       createdAt: createdAt,
       referrerUserId: referrerUserId,
       referrerName: referrerName,
@@ -155,9 +158,9 @@ class BonusResult {
       payableBonus: toDoubleOrNull(json['payable_bonus']) ?? toDoubleOrNull(json['bonus_amount']),
       carryForwardBalance: toDoubleOrNull(json['carry_forward_balance']),
       calculatedAt: json['calculated_at'] as String?,
-      whatsappStatus: json['whatsapp_status'] as String? ?? 'not_sent',
-      whatsappInitiatedAt: json['whatsapp_initiated_at'] as String?,
-      whatsappInitiatedCount: toInt(json['whatsapp_initiated_count']),
+      sendStatus: json['send_status'] as String? ?? 'pending',
+      sendError: json['send_error'] as String?,
+      sentAt: json['sent_at'] as String?,
       createdAt: json['created_at'] as String?,
       referrerUserId: json['referrer_user_id'] as String?,
       referrerName: json['referrer_name'] as String?,

@@ -126,6 +126,23 @@ class Api:
         return report_id, {r["user_name"]: r for r in calc.json()["results"]}
 
 
+@pytest.fixture(autouse=True)
+def no_real_provider(monkeypatch):
+    """Tests must never read the developer's real .env provider settings or reach
+    the network: blank them and fail loudly on any real HTTP call."""
+    from app.core.config import get_settings
+    from app.services import no1api_client
+
+    settings = get_settings()
+    for name in ("NO1API_BASE_URL", "NO1API_API_KEY", "NO1API_PHONE_NUMBER_ID"):
+        monkeypatch.setattr(settings, name, "")
+
+    def blocked(*args, **kwargs):
+        raise AssertionError("A test tried to make a real HTTP request to the provider.")
+
+    monkeypatch.setattr(no1api_client.httpx, "post", blocked)
+
+
 @pytest.fixture()
 def fake_db() -> FakeSupabase:
     return FakeSupabase()

@@ -270,7 +270,7 @@ BONUS_RESULT_SELECT = (
     "profit_loss, ptype, bonus_amount, calculation_status, created_at, "
     "personal_rate_used, personal_adjustment, referral_adjustment, "
     "previous_balance, final_balance, payable_bonus, carry_forward_balance, "
-    "calculated_at, whatsapp_initiated_at, whatsapp_initiated_count, "
+    "calculated_at, whatsapp_send_status, whatsapp_send_error, whatsapp_sent_at, "
     "users(id, name, level, whatsapp_number)"
 )
 
@@ -369,7 +369,6 @@ def default_row_reference(raw: dict, index: int) -> str:
 def to_bonus_result(row: dict) -> BonusResult:
     """Converts one joined bonus_results+users row into the API schema."""
     user = row.get("users") or {}
-    initiated_at = row.get("whatsapp_initiated_at")
     return BonusResult(
         bonus_result_id=row["id"],
         report_id=row["report_id"],
@@ -392,9 +391,9 @@ def to_bonus_result(row: dict) -> BonusResult:
         payable_bonus=_f(row.get("payable_bonus")),
         carry_forward_balance=_f(row.get("carry_forward_balance")),
         calculated_at=row.get("calculated_at"),
-        whatsapp_status="initiated" if initiated_at else "not_sent",
-        whatsapp_initiated_at=initiated_at,
-        whatsapp_initiated_count=row.get("whatsapp_initiated_count") or 0,
+        send_status=row.get("whatsapp_send_status") or "pending",
+        send_error=row.get("whatsapp_send_error"),
+        sent_at=row.get("whatsapp_sent_at"),
         created_at=row.get("created_at"),
     )
 

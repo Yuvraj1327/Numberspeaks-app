@@ -3,7 +3,7 @@
 import pytest
 
 from app.services.users_service import normalize_whatsapp_number
-from tests.conftest import build_pdf
+from tests.conftest import ADMIN_A, build_pdf
 
 
 # --- number normalisation ------------------------------------------------------
@@ -100,64 +100,179 @@ def test_history_lists_each_calculation_with_its_breakdown(a):
     assert {newest["report_file_name"], oldest["report_file_name"]} == {"w1.pdf", "w2.pdf"}
 
 
-# --- WhatsApp: only an 'opened' record, never 'sent' -------------------------------
-def initiate(a, rid, row, number="919876543210", message="Hi Rahul, you've got ₹30 bonus. Please enjoy your game!"):
-    return a.post(
-        f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-initiated",
-        json={"whatsapp_number": number, "message": message},
-    )
+# --- WhatsApp: sent through the server-side No1API integration ------------------
+from app.services import no1api_client  # noqa: E402
+from app.services.no1api_client import ProviderOutcomeUnknown, ProviderSendError, SendOutcome  # noqa: E402
 
 
-def test_record_that_whatsapp_was_opened(a):
+@pytest.fixture()
+def provider(monkeypatch):
+    """A fake No1API: records calls; `behaviour` decides the outcome."""
+    state = {"calls": [], "behaviour": lambda n, m: SendOutcome(provider_message_id="pm-1")}
+
+    def send_text(number, message):
+        state["calls"].append((number, message))
+        return state["behaviour"](number, message)
+
+    monkeypatch.setattr(no1api_client, "is_available", lambda: True)
+    monkeypatch.setattr(no1api_client, "send_text", send_text)
+    return state
+
+
+def send(a, rid, row, message="Hi Rahul, you've got ₹30 bonus."):
+    return a.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-send", json={"message": message})
+
+
+def numbered(a):
     rid, row = user_id(a)
-    assert row["whatsapp_status"] == "not_sent"
-    r = initiate(a, rid, row)
+    a.patch(f"/users/{row['user_id']}", json={"whatsapp_number": "919876543210"})
+    return rid, row
+
+
+def test_results_start_as_pending(a):
+    rid, row = user_id(a)
+    assert row["send_status"] == "pending"
+
+
+def test_send_goes_to_the_saved_number_and_is_recorded_as_sent(a, provider, fake_db):
+    rid, row = numbered(a)
+    r = send(a, rid, row, message="edited by admin")
     assert r.status_code == 200, r.text
-    assert r.json()["whatsapp_status"] == "initiated" and r.json()["whatsapp_initiated_count"] == 1
-
+    assert r.json()["send_status"] == "sent" and r.json()["sent_at"]
+    assert provider["calls"] == [("919876543210", "edited by admin")]
     after = a.results(rid)["Rahul"]
-    assert after["whatsapp_initiated_count"] == 1 and after["whatsapp_initiated_at"]
-    assert after["whatsapp_status"] == "initiated"  # NEVER 'sent' / 'delivered'
-
-    assert initiate(a, rid, row).json()["whatsapp_initiated_count"] == 2
-
-
-def test_the_message_and_number_that_were_opened_are_logged(a, fake_db):
-    rid, row = user_id(a)
-    initiate(a, rid, row, number="+91 98765 43210", message="edited by admin")
-    log = fake_db.tables["whatsapp_initiations"]
-    assert len(log) == 1 and log[0]["message_body"] == "edited by admin" and log[0]["whatsapp_number"] == "+919876543210"
+    assert after["send_status"] == "sent" and after["sent_at"] and after["send_error"] is None
+    log = fake_db.tables["whatsapp_sends"]
+    assert len(log) == 1 and log[0]["status"] == "sent" and log[0]["provider_message_id"] == "pm-1"
 
 
-def test_no_bonus_message_for_a_user_with_nothing_payable(a):
+def test_a_sent_message_cannot_be_sent_twice(a, provider):
+    rid, row = numbered(a)
+    assert send(a, rid, row).status_code == 200
+    assert send(a, rid, row).status_code == 409
+    assert len(provider["calls"]) == 1
+
+
+def test_failure_is_recorded_and_can_be_retried_once(a, provider, fake_db):
+    rid, row = numbered(a)
+
+    def boom(n, m):
+        raise ProviderSendError("provider said no")
+
+    provider["behaviour"] = boom
+    r = send(a, rid, row)
+    assert r.status_code == 200 and r.json()["send_status"] == "failed" and r.json()["send_error"] == "provider said no"
+    assert a.results(rid)["Rahul"]["send_status"] == "failed"
+
+    provider["behaviour"] = lambda n, m: SendOutcome("pm-2")
+    r2 = send(a, rid, row)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["send_status"] == "sent"
+    assert [x["status"] for x in fake_db.tables["whatsapp_sends"]] == ["failed", "sent"]  # history kept
+    assert send(a, rid, row).status_code == 409
+
+
+def test_unexpected_provider_error_is_unknown_without_leaking_details(a, provider):
+    rid, row = numbered(a)
+
+    def boom(n, m):
+        raise RuntimeError("secret-token-123 in url")
+
+    provider["behaviour"] = boom
+    body = send(a, rid, row).json()
+    assert body["send_status"] == "unknown" and "secret" not in str(body)
+
+
+def test_a_send_already_in_progress_blocks_a_second_one(a, provider, fake_db):
+    rid, row = numbered(a)
+    fake_db.table("whatsapp_sends").insert(
+        {"owner_id": ADMIN_A, "bonus_result_id": row["bonus_result_id"], "whatsapp_number": "1", "message_body": "x",
+         "status": "sending"}
+    ).execute()
+    from datetime import datetime, timezone
+
+    fake_db.tables["whatsapp_sends"][0]["created_at"] = datetime.now(timezone.utc).isoformat()  # fresh, not stale
+    assert send(a, rid, row).status_code == 409
+    assert provider["calls"] == []
+
+
+def test_a_stale_sending_attempt_becomes_unknown_and_retry_is_allowed(a, provider, fake_db):
+    rid, row = numbered(a)
+    fake_db.table("whatsapp_sends").insert(
+        {"owner_id": ADMIN_A, "bonus_result_id": row["bonus_result_id"], "whatsapp_number": "1", "message_body": "x",
+         "status": "sending"}
+    ).execute()
+    fake_db.tables["whatsapp_sends"][0]["created_at"] = "2020-01-01T00:00:00+00:00"
+    assert send(a, rid, row).json()["send_status"] == "sent"
+    assert fake_db.tables["whatsapp_sends"][0]["status"] == "unknown"
+    assert "unknown" in fake_db.tables["whatsapp_sends"][0]["error_message"]
+
+
+def test_not_configured_provider_sends_nothing_and_creates_no_record(a, fake_db):
+    rid, row = numbered(a)  # no `provider` fixture: the real stub is unavailable
+    r = send(a, rid, row)
+    assert r.status_code == 503
+    assert fake_db.tables.get("whatsapp_sends", []) == []
+    assert a.results(rid)["Rahul"]["send_status"] == "pending"
+
+
+def test_no_bonus_message_for_a_user_with_nothing_payable(a, provider):
     rid, row = user_id(a, "Winner", 10000)  # carries -300, payable 0
-    assert initiate(a, rid, row).status_code == 409
-    assert a.results(rid)["Winner"]["whatsapp_status"] == "not_sent"
+    a.patch(f"/users/{row['user_id']}", json={"whatsapp_number": "919876543210"})
+    assert send(a, rid, row).status_code == 409
+    assert provider["calls"] == []
 
 
-def test_cannot_record_before_the_bonus_is_calculated(a):
+def test_cannot_send_before_the_bonus_is_calculated(a, provider):
     rid = a.upload([("Rahul", -1000)]).json()["report_id"]
-    row = a.results(rid)["Rahul"]
-    assert initiate(a, rid, row).status_code == 409
+    assert send(a, rid, a.results(rid)["Rahul"]).status_code == 409
 
 
-def test_missing_number_or_message_is_rejected(a):
+def test_missing_number_or_message_is_rejected(a, provider):
+    rid, row = user_id(a)  # no saved number
+    assert send(a, rid, row).status_code == 422
+    a.patch(f"/users/{row['user_id']}", json={"whatsapp_number": "919876543210"})
+    assert send(a, rid, row, message="").status_code == 422
+    assert send(a, rid, row, message="   ").status_code == 422
+    assert provider["calls"] == []
+
+
+def test_unknown_result_is_404(a, provider):
     rid, row = user_id(a)
-    assert initiate(a, rid, row, number="").status_code == 422
-    assert initiate(a, rid, row, number="abc").status_code == 422
-    assert initiate(a, rid, row, message="").status_code == 422
-    assert a.results(rid)["Rahul"]["whatsapp_initiated_count"] == 0
-
-
-def test_unknown_result_is_404(a):
-    rid, row = user_id(a)
-    r = a.post(f"/reports/{rid}/results/00000000-0000-4000-8000-000000000999/whatsapp-initiated",
-               json={"whatsapp_number": "919876543210", "message": "x"})
+    r = a.post(f"/reports/{rid}/results/00000000-0000-4000-8000-000000000999/whatsapp-send", json={"message": "x"})
     assert r.status_code == 404
 
 
-def test_there_is_no_server_side_send_endpoint(client):
+def test_wa_me_opened_endpoint_is_gone(client):
     from app.main import app
 
-    paths = " ".join(r.path for r in app.routes)
-    assert "send-whatsapp" not in paths and "/whatsapp/send" not in paths
+    assert "whatsapp-initiated" not in " ".join(r.path for r in app.routes)
+
+
+def test_every_attempt_is_saved_with_report_user_number_message_and_provider_id(a, provider, fake_db):
+    rid, row = numbered(a)
+    send(a, rid, row, message="the exact text")
+    log = fake_db.tables["whatsapp_sends"][0]
+    assert log["report_id"] == rid and log["user_id"] == row["user_id"] and log["bonus_result_id"] == row["bonus_result_id"]
+    assert log["whatsapp_number"] == "919876543210" and log["message_body"] == "the exact text"
+    assert log["provider_message_id"] == "pm-1" and log["status"] == "sent" and log["created_at"]
+
+
+def test_an_unanswered_request_is_unknown_not_sent_and_can_be_retried_explicitly(a, provider):
+    rid, row = numbered(a)
+
+    def timeout(n, m):
+        raise ProviderOutcomeUnknown()
+
+    provider["behaviour"] = timeout
+    assert send(a, rid, row).json()["send_status"] == "unknown"
+    assert a.results(rid)["Rahul"]["send_status"] == "unknown"
+    provider["behaviour"] = lambda n, m: SendOutcome("pm-9")
+    assert send(a, rid, row).json()["send_status"] == "sent"
+
+
+def test_an_invalid_saved_number_is_not_sent(a, provider, fake_db):
+    rid, row = numbered(a)
+    next(u for u in fake_db.tables["users"])["whatsapp_number"] = "12"  # bypasses normalisation
+    assert send(a, rid, row).status_code == 422
+    assert provider["calls"] == []

@@ -31,12 +31,6 @@ void main() {
     expect(text, 'u1|Amy|270.00|300.00|-30.00|0.00|5–11 Oct 2026|{Other}');
   });
 
-  test('wa.me link is prefilled and url-encoded', () {
-    final uri = WhatsAppLink.build(number: '+91 98765 43210', message: 'Hi Amy, ₹300 bonus');
-    expect(uri.toString(), startsWith('https://wa.me/919876543210?text='));
-    expect(Uri.decodeComponent(uri.query.substring(5)), 'Hi Amy, ₹300 bonus');
-  });
-
   test('referral entry and referrer parse the new fields', () {
     final e = ReferralEntry.fromJson({
       'entry_id': 'e', 'report_id': 'r', 'referrer_user_id': 'a', 'referred_user_id': 'b', 'rate': 0.1,

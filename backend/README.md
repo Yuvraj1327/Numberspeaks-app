@@ -11,7 +11,7 @@
 > | Personal rule | loss → `+3%` of the loss; win → `-3%` of the win; zero → `0` (rate configurable) |
 > | Referral rule | manual entries, default `10%` (configurable per entry): referred user's loss → `+`, win → `-` |
 > | Final | `previous carried + personal + referral`. `> 0` → payable; `< 0` → payable `0` and the negative carries forward; `0` → `0` |
-> | WhatsApp | **No automatic sending.** The app opens a prefilled `wa.me` link; the backend only records "initiated/opened" |
+> | WhatsApp | The admin reviews/edits the message in a confirm dialog; the backend sends it via the No1API integration (`POST /reports/{id}/results/{bonus_result_id}/whatsapp-send`). **The No1API call (`app/services/no1api_client.py`) follows the Meta Cloud API format shown in the No1API dashboard (API URL / version / Phone Number ID); it is verified only by the mandatory test message. Env: `NO1API_BASE_URL`, `NO1API_API_KEY`, `NO1API_API_VERSION`, `NO1API_PHONE_NUMBER_ID`.** Run `supabase/whatsapp_api_send_schema.sql` then `supabase/whatsapp_bulk_schema.sql`. Bulk: `POST /reports/{id}/whatsapp-bulk` (confirmed, test-gated via `POST /whatsapp/test-send`, background, `NO1API_MIN_INTERVAL_SECONDS` pause), progress at `GET /reports/{id}/whatsapp-bulk/{batch_id}`. |
 > | Ownership | Every row is stamped with `owner_id`, taken **only** from the verified Supabase access token. Any owner id in a request body is ignored |
 > | Data | Everything persists in Supabase (reports, extracted rows, results, users, WhatsApp numbers, referrals, rates, history) |
 >
@@ -39,7 +39,7 @@
 > | `GET/POST/DELETE /reports/{id}/referrals` | Manual referral entries (duplicates rejected) |
 > | `GET /users`, `GET/PATCH /users/{id}`, `GET /users/{id}/history` | Individual users, WhatsApp number, history |
 > | `GET/PUT /settings` | Personal % and referral % |
-> | `POST /reports/{id}/results/{bonus_result_id}/whatsapp-initiated` | Record that the admin opened WhatsApp |
+> | `POST /reports/{id}/results/{bonus_result_id}/whatsapp-send` | Send the reviewed message via No1API; one `sending`/`sent` attempt per result (DB-enforced), `failed` can be retried |
 >
 > ### Tests
 > ```bash

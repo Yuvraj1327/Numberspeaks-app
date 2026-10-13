@@ -1,7 +1,6 @@
-/// Builds the `wa.me` link the admin's own device opens. Nothing is sent by
-/// this app or the backend: WhatsApp (the app, or WhatsApp Web in a browser)
-/// opens with the chat and the message already typed, and the admin presses
-/// Send inside WhatsApp themselves.
+/// Message template and number helpers for the WhatsApp send flow. The
+/// message is only *built* here; it is sent by the backend after the admin
+/// confirms (see lib/widgets/whatsapp_message_dialog.dart).
 ///
 /// Pure functions only (no Flutter imports), so they can be unit-tested
 /// without a device — see test/whatsapp_link_test.dart.
@@ -9,12 +8,11 @@ class WhatsAppLink {
   WhatsAppLink._();
 
   /// The default message. `{User ID}` and `{Bonus Amount}` are replaced; the
-  /// admin can edit the whole text before opening WhatsApp.
+  /// admin can edit the whole text before confirming the send.
   static const String defaultTemplate =
       "Hi {User ID}, you've got ₹{Bonus Amount} bonus. Please enjoy your game!";
 
-  /// wa.me wants the number as digits only, country code first, with no
-  /// "+", spaces, dashes or leading zeros.
+  /// The number as digits only, country code first.
   static String digitsOnly(String number) => number.replaceAll(RegExp(r'[^0-9]'), '');
 
   /// The same range the backend accepts (7–15 digits).
@@ -69,11 +67,5 @@ class WhatsAppLink {
     var out = template;
     values.forEach((key, value) => out = out.replaceAll(key, value));
     return out;
-  }
-
-  /// `https://wa.me/<digits>?text=<url-encoded message>`. Spaces become
-  /// `%20` (not `+`), which WhatsApp reads as a space on both mobile and web.
-  static Uri build({required String number, required String message}) {
-    return Uri.parse('https://wa.me/${digitsOnly(number)}?text=${Uri.encodeComponent(message)}');
   }
 }

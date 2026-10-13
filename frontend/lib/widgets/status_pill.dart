@@ -34,14 +34,20 @@ class StatusPill extends StatelessWidget {
     return StatusPill(label: status.label, color: color);
   }
 
-  /// WhatsApp status of one result. The app never sends a message itself, so
-  /// the only states are: not opened yet, or "Opened" (the admin opened
-  /// WhatsApp with the message pre-filled). Nothing here ever says "Sent" or
-  /// "Delivered" — that cannot be known.
-  factory StatusPill.forWhatsApp({required bool opened}) {
-    return opened
-        ? const StatusPill(label: 'Opened', color: AppTheme.blue)
-        : const StatusPill(label: 'Not opened', color: Colors.black54);
+  /// WhatsApp send status of one result: Pending, Sending, Sent or Failed.
+  /// "Sent" only ever appears once the backend recorded the provider's
+  /// confirmation.
+  factory StatusPill.forSend(String sendStatus) {
+    switch (sendStatus) {
+      case 'sent':
+        return const StatusPill(label: 'Sent', color: AppTheme.success);
+      case 'sending':
+        return const StatusPill(label: 'Sending', color: AppTheme.blue);
+      case 'failed':
+        return const StatusPill(label: 'Failed', color: AppTheme.danger);
+      default:
+        return const StatusPill(label: 'Pending', color: Colors.black54);
+    }
   }
 
   @override

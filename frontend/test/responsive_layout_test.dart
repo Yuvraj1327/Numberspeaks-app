@@ -67,8 +67,7 @@ Map<String, dynamic> _row(int i) => {
       'final_balance': 35802.54,
       'payable_bonus': i.isEven ? 35802.54 : 0,
       'carry_forward_balance': i.isEven ? 0 : -500.5,
-      'whatsapp_status': 'not_sent',
-      'whatsapp_initiated_count': 0,
+      'send_status': 'pending',
     };
 
 class _Backend implements HttpClientAdapter {

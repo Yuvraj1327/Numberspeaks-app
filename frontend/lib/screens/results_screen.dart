@@ -5,6 +5,7 @@ import '../core/api_exception.dart';
 import '../core/app_theme.dart';
 import '../core/responsive.dart';
 import '../core/formatters.dart';
+import '../core/whatsapp_link.dart';
 import '../models/bonus_result.dart';
 import '../models/report_status.dart';
 import '../models/report_summary.dart';
@@ -17,6 +18,7 @@ import '../widgets/grid_table.dart';
 import '../widgets/loading_view.dart';
 import '../widgets/screen_header.dart';
 import '../widgets/status_pill.dart';
+import '../widgets/whatsapp_bulk_dialog.dart';
 import '../widgets/whatsapp_message_dialog.dart';
 import '../widgets/whatsapp_number_dialog.dart';
 
@@ -314,14 +316,14 @@ class _ResultsBody extends StatefulWidget {
 
 class _ResultsBodyState extends State<_ResultsBody> {
   static const _columns = [
-    GridColumn('User ID / Name', 170),
+    GridColumn('User ID / Name', 210),
     GridColumn('Profit / Loss', 110, numeric: true),
     GridColumn('Personal bonus / adjustment', 130, numeric: true),
     GridColumn('Referral bonus / adjustment', 130, numeric: true),
     GridColumn('Previous balance', 120, numeric: true),
     GridColumn('Final payable bonus', 140, numeric: true),
     GridColumn('WhatsApp number', 190),
-    GridColumn('WhatsApp action', 150),
+    GridColumn('WhatsApp send', 190),
     GridColumn('Edit', 90),
   ];
 
@@ -330,8 +332,9 @@ class _ResultsBodyState extends State<_ResultsBody> {
   List<BonusResult> _results = [];
   ReportSummary? _report;
   String _query = '';
-  _SortOption _sort = _SortOption.nameAsc;
+  _SortOption _sort = _SortOption.payableHighLow;
   _FilterOption _filter = _FilterOption.all;
+  final Set<String> _selected = {};
   // Only the newest load may update the screen: a slower, older response
   // (e.g. a quiet refresh overtaken by a manual reload) must not overwrite it.
   int _loadId = 0;
@@ -435,11 +438,86 @@ class _ResultsBodyState extends State<_ResultsBody> {
   }
 
   Future<void> _sendWhatsApp(BonusResult result) async {
-    final updated = await showWhatsAppMessageDialog(context, result: result);
-    if (updated == null || !mounted) return;
-    setState(() => _replace(updated));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('WhatsApp opened. Recorded as "Opened" — not as sent.')),
+    final outcome = await showWhatsAppMessageDialog(context, result: result);
+    if (outcome == null || !mounted) return;
+    if (outcome.result != null) setState(() => _replace(outcome.result!));
+    // The server may know better than the screen (e.g. a send already in flight).
+    if (outcome.refresh) _load(silent: true);
+  }
+
+  /// Can be picked for a bulk send: payable, has a usable number, and not
+  /// already Sent / being sent. (Failed and Unknown ones are picked on purpose
+  /// to retry them.)
+  bool _selectable(BonusResult r) =>
+      r.hasPayableBonus &&
+      WhatsAppLink.isUsableNumber(r.whatsappNumber ?? '') &&
+      !r.isSent &&
+      !r.isSending;
+
+  List<BonusResult> get _selectedResults =>
+      _results.where((r) => _selected.contains(r.bonusResultId) && _selectable(r)).toList();
+
+  /// "All eligible" = never attempted. Failed/Unknown are never swept in
+  /// automatically: they are retried only by selecting them.
+  List<BonusResult> get _allEligible =>
+      _results.where((r) => _selectable(r) && r.sendStatus == 'pending').toList();
+
+  List<BulkSkipPreview> _skippedPreview(Iterable<BonusResult> pool) {
+    final out = <BulkSkipPreview>[];
+    for (final r in pool) {
+      if (!r.hasPayableBonus || r.isSent) continue;
+      if (!r.hasWhatsAppNumber) {
+        out.add(BulkSkipPreview(r.userName, 'No WhatsApp number saved.'));
+      } else if (!WhatsAppLink.isUsableNumber(r.whatsappNumber ?? '')) {
+        out.add(BulkSkipPreview(r.userName, 'The saved number is not valid.'));
+      }
+    }
+    return out;
+  }
+
+  Future<void> _bulkSend({required bool all}) async {
+    final targets = all ? _allEligible : _selectedResults;
+    final skipped = _skippedPreview(
+        all ? _results : _results.where((r) => _selected.contains(r.bonusResultId)));
+    final reportId = _results.isEmpty ? null : _results.first.reportId;
+    if (reportId == null) return;
+    await showWhatsAppBulkDialog(
+      context,
+      reportId: reportId,
+      title: all ? 'Send All Eligible' : 'Send Selected',
+      targets: targets,
+      skipped: skipped,
+    );
+    if (!mounted) return;
+    setState(_selected.clear);
+    _load(silent: true);
+  }
+
+  Widget _bulkBar() {
+    final selected = _selectedResults.length;
+    final eligible = _allEligible.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+      child: Wrap(
+        spacing: AppSpacing.sm,
+        runSpacing: AppSpacing.xs,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          OutlinedButton.icon(
+            onPressed: selected == 0 ? null : () => _bulkSend(all: false),
+            icon: const Icon(Icons.checklist, size: 18),
+            label: Text('Send Selected ($selected)'),
+          ),
+          OutlinedButton.icon(
+            onPressed: eligible == 0 ? null : () => _bulkSend(all: true),
+            icon: const Icon(Icons.send_and_archive_outlined, size: 18),
+            label: Text('Send All Eligible ($eligible)'),
+          ),
+          if (_selected.isNotEmpty)
+            TextButton(
+                onPressed: () => setState(_selected.clear), child: const Text('Clear selection')),
+        ],
+      ),
     );
   }
 
@@ -590,10 +668,16 @@ class _ResultsBodyState extends State<_ResultsBody> {
                         value: _SortOption.payableLowHigh, child: Text('Payable (low-high)')),
                   ],
                 ),
-                IconButton(
-                  tooltip: 'Referrals',
-                  icon: const Icon(Icons.group_add_outlined),
+                TextButton.icon(
                   onPressed: _openReferrals,
+                  icon: const Icon(Icons.group_add_outlined, size: 18),
+                  label: const Text('Referral', style: TextStyle(fontSize: 13)),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: const Size(0, 40),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                 ),
                 if (calculated)
                   IconButton(
@@ -604,6 +688,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
               ],
             ),
           ),
+          if (calculated && !keyboardOpen) _bulkBar(),
           if (!keyboardOpen) ...[
             SizedBox(
               height: 36,
@@ -660,7 +745,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
                         child: GridTable(
                           columns: _columns,
                           itemCount: visible.length,
-                          rowHeight: Responsive.rowHeight(context, 68),
+                          rowHeight: Responsive.rowHeight(context, 80),
                           onRowTap: (index) => _openDetail(visible[index]),
                           cellsBuilder: (context, index) => _cells(visible[index]),
                         ),
@@ -749,40 +834,65 @@ class _ResultsBodyState extends State<_ResultsBody> {
     );
   }
 
+  Widget _nameCell(BonusResult r) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          r.userName,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        if (r.level != null && r.level!.trim().isNotEmpty)
+          Text(
+            'Level ${r.level}',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11.5, color: Colors.black54),
+          ),
+        if (r.hasReferrer)
+          Text(
+            'Referred by ${r.referrerName}',
+            overflow: TextOverflow.ellipsis,
+            style:
+                const TextStyle(fontSize: 11.5, color: AppTheme.blue, fontWeight: FontWeight.w600),
+          ),
+        if (r.referredCount > 0)
+          Text(
+            'Referrer · ${r.referredCount} referred',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 11.5, color: AppTheme.success, fontWeight: FontWeight.w600),
+          ),
+      ],
+    );
+  }
+
   List<Widget> _cells(BonusResult r) {
     final carry = r.carryForwardBalance ?? 0;
 
     return [
-      // User ID / Name
-      Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            r.userName,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w800),
+      // User ID / Name (with the bulk-send checkbox)
+      Row(children: [
+        SizedBox(
+          width: 30,
+          child: Checkbox(
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+            value: _selected.contains(r.bonusResultId),
+            onChanged: _selectable(r)
+                ? (v) => setState(() {
+                      if (v == true) {
+                        _selected.add(r.bonusResultId);
+                      } else {
+                        _selected.remove(r.bonusResultId);
+                      }
+                    })
+                : null,
           ),
-          if (r.level != null && r.level!.trim().isNotEmpty)
-            Text(
-              'Level ${r.level}',
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11.5, color: Colors.black54),
-            ),
-          if (r.hasReferrer)
-            Text(
-              'Referred by ${r.referrerName}',
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11.5, color: AppTheme.blue, fontWeight: FontWeight.w600),
-            ),
-          if (r.referredCount > 0)
-            Text(
-              'Referrer · ${r.referredCount} referred',
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11.5, color: AppTheme.success, fontWeight: FontWeight.w600),
-            ),
-        ],
-      ),
+        ),
+        Expanded(child: _nameCell(r)),
+      ]),
       // Profit / Loss
       Text(
         Formatters.points(r.profitLoss),
@@ -863,29 +973,36 @@ class _ResultsBodyState extends State<_ResultsBody> {
         style: const TextStyle(color: Colors.black38, fontWeight: FontWeight.w600),
       );
     }
+    // 'sending' that survives a reload means a send never finished: it may be
+    // retried (the server still refuses a duplicate while one is truly in flight).
+    final canSend = r.hasWhatsAppNumber && !r.isSent;
+    final label = r.isSent
+        ? 'Sent'
+        : (r.isSendFailed || r.isSending)
+            ? 'Retry send'
+            : 'Auto Send WhatsApp';
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         ElevatedButton.icon(
-          onPressed: r.hasWhatsAppNumber ? () => _sendWhatsApp(r) : null,
+          onPressed: canSend ? () => _sendWhatsApp(r) : null,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.success,
             foregroundColor: Colors.white,
             minimumSize: const Size(0, 34),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
           ),
-          icon: const Icon(Icons.send_outlined, size: 16),
-          label: const Text('WhatsApp'),
+          icon: Icon(r.isSent ? Icons.check : Icons.send_outlined, size: 16),
+          label: Text(label, style: const TextStyle(fontSize: 12)),
         ),
         const SizedBox(height: 2),
         if (!r.hasWhatsAppNumber)
           const Text('Add a number first', style: TextStyle(fontSize: 10.5, color: Colors.black45))
-        else if (r.whatsappInitiated)
-          Text(
-            'Opened ×${r.whatsappInitiatedCount > 0 ? r.whatsappInitiatedCount : 1}',
-            style:
-                const TextStyle(fontSize: 10.5, color: AppTheme.blue, fontWeight: FontWeight.w700),
+        else
+          Tooltip(
+            message: r.sendError ?? '',
+            child: StatusPill.forSend(r.sendStatus),
           ),
       ],
     );

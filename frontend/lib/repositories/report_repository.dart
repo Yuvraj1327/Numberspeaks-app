@@ -52,7 +52,7 @@ class ReportRepository extends ChangeNotifier {
   int get revision => _revision;
 
   /// Bumps only when report data / calculations / referrals / rates change
-  /// (not for a saved WhatsApp number or a WhatsApp "opened" record, which
+  /// (not for a saved WhatsApp number or a WhatsApp send status, which
   /// the screens already apply locally).
   int get structureRevision => _structureRevision;
 
@@ -264,21 +264,33 @@ class ReportRepository extends ChangeNotifier {
 
   // --- WhatsApp ---------------------------------------------------------
 
-  /// Records that WhatsApp was opened for this result. Call this only after
-  /// the `wa.me` link was actually launched.
-  Future<WhatsAppOpenedRecord> recordWhatsAppOpened({
+  /// Sends the reviewed message through the backend (No1API). The backend
+  /// refuses a second send while one is in flight or already sent.
+  Future<WhatsAppSendResult> sendWhatsApp({
     required String reportId,
     required String bonusResultId,
-    required String whatsappNumber,
     required String message,
   }) async {
-    final record = await _whatsappApi.recordOpened(
-      reportId: reportId,
-      bonusResultId: bonusResultId,
-      whatsappNumber: whatsappNumber,
-      message: message,
-    );
+    final result = await _whatsappApi.send(reportId: reportId, bonusResultId: bonusResultId, message: message);
     _changed(structural: false);
-    return record;
+    return result;
   }
+
+  /// Starts a confirmed bulk send (the backend processes it in the background).
+  Future<BulkProgress> startWhatsAppBulk({
+    required String reportId,
+    required List<({String bonusResultId, String message})> items,
+  }) async {
+    final p = await _whatsappApi.startBulk(reportId: reportId, items: items);
+    _changed(structural: false);
+    return p;
+  }
+
+  Future<BulkProgress> whatsAppBulkProgress(String reportId, String batchId) =>
+      _whatsappApi.bulkProgress(reportId, batchId);
+
+  Future<bool> whatsAppTestPassed() => _whatsappApi.testPassed();
+
+  Future<(String, String?)> sendWhatsAppTest({required String number, required String message}) =>
+      _whatsappApi.sendTest(number: number, message: message);
 }

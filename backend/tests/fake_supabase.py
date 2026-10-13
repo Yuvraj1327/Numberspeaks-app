@@ -42,6 +42,8 @@ UNIQUES: Dict[str, List[Any]] = {
     "referral_entries": [(("owner_id", "report_id", "referred_user_id"), None)],
     "bonus_settings": [(("owner_id",), None)],
     "referrers": [(("owner_id", "user_id"), None)],
+    # mirrors uq_whatsapp_sends_one_active (partial: only sending/sent rows)
+    "whatsapp_sends": [(("bonus_result_id",), lambda r: r.get("status") in ("sending", "sent"))],
 }
 
 DEFAULTS: Dict[str, Dict[str, Any]] = {
@@ -53,11 +55,15 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
                       "personal_rate_used": None, "personal_adjustment": None, "referral_adjustment": None,
                       "previous_balance": None, "final_balance": None, "payable_bonus": None,
                       "carry_forward_balance": None, "calculated_at": None,
-                      "whatsapp_initiated_at": None, "whatsapp_initiated_count": 0},
+                      "whatsapp_send_status": "pending", "whatsapp_send_error": None,
+                      "whatsapp_sent_at": None},
     "referral_entries": {"amount": None, "adjustment": None, "calculated_at": None},
     "referrers": {"display_name": None, "notes": None, "default_rate": None, "is_active": True},
     "calculation_history": {},
     "whatsapp_initiations": {},
+    "whatsapp_sends": {"provider_message_id": None, "error_message": None, "batch_id": None},
+    "whatsapp_batches": {"skipped": [], "finished_at": None},
+    "whatsapp_test_sends": {"provider_message_id": None, "error_message": None},
     "bonus_settings": {},
 }
 
@@ -162,11 +168,16 @@ class FakeQuery:
 
     def _check_unique(self, candidate: dict, ignore: Optional[dict] = None) -> None:
         for cols, partial in UNIQUES.get(self.table_name, []):
-            if partial and candidate.get(partial) is None:
+            if callable(partial):
+                if not partial(candidate):
+                    continue
+            elif partial and candidate.get(partial) is None:
                 continue
             key = tuple(candidate.get(c) for c in cols)
             for existing in self._rows():
                 if existing is ignore:
+                    continue
+                if callable(partial) and not partial(existing):
                     continue
                 if tuple(existing.get(c) for c in cols) == key:
                     raise FakeAPIError(

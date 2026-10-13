@@ -117,7 +117,11 @@ PROTECTED = [
     ("get", "/api/v1/users/x/history"),
     ("get", "/api/v1/settings"),
     ("put", "/api/v1/settings"),
-    ("post", "/api/v1/reports/x/results/y/whatsapp-initiated"),
+    ("post", "/api/v1/reports/x/results/y/whatsapp-send"),
+    ("post", "/api/v1/reports/x/whatsapp-bulk"),
+    ("get", "/api/v1/reports/x/whatsapp-bulk/y"),
+    ("get", "/api/v1/whatsapp/test-status"),
+    ("post", "/api/v1/whatsapp/test-send"),
 ]
 
 

@@ -300,7 +300,7 @@ class _ReportProcessingScreenState extends State<ReportProcessingScreen> {
   /// Every figure here comes straight out of the real `calculate-bonus`
   /// response. "Carried forward" are users whose final balance is negative:
   /// nothing is payable for them this period and the balance moves to the
-  /// next one. WhatsApp is never sent automatically, so "opened" is 0 right
+  /// next one. Nothing is sent automatically, so every user is "Pending" right
   /// after calculating.
   Widget _buildCompletionSummary(BuildContext context) {
     final summary = _bonusSummary;

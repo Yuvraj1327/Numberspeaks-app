@@ -42,27 +42,17 @@ class Settings(BaseSettings):
     DEFAULT_PERSONAL_RATE: float = 0.03
     DEFAULT_REFERRAL_RATE: float = 0.10
 
-    # --- WhatsApp (legacy, NOT used by the app any more) ---
-    # The backend no longer sends WhatsApp messages by itself (the admin
-    # opens WhatsApp from the app via a wa.me link instead), so the
-    # settings below are inert. They are kept only so an existing .env
-    # keeps loading without errors.
-    # Default provider was Meta's WhatsApp Cloud API (the official WhatsApp
-    # Business Platform API) — no specific provider was given, and this is
-    # the literal "WhatsApp API" rather than a guessed third-party one.
-    # WHATSAPP_API_KEY: a permanent access token for your WhatsApp Business app.
-    WHATSAPP_API_KEY: str = ""
-    # WHATSAPP_PHONE_NUMBER_ID: the sending number's ID from Meta's dashboard
-    # (Business Settings -> WhatsApp Accounts -> Phone numbers). Not the
-    # phone number itself.
-    WHATSAPP_PHONE_NUMBER_ID: str = ""
-    # Base URL for the Graph API. Only change this to point at a different
-    # provider/proxy, or to pin a different Graph API version.
-    WHATSAPP_API_BASE_URL: str = "https://graph.facebook.com/v20.0"
-    # Optional override for the message sent to each user. Leave unset to
-    # use the built-in default template in app/services/whatsapp_templates.py.
-    # See that file for the exact placeholder names available.
-    WHATSAPP_MESSAGE_TEMPLATE: str = ""
+    # --- No1API (WhatsApp sending; server-side only, never sent to the app) ---
+    # All four values come from the No1API dashboard: Channel -> API Details.
+    # See app/services/no1api_client.py.
+    NO1API_BASE_URL: str = ""  # "API URL", e.g. https://crm1.no1api.com/api/meta
+    NO1API_API_KEY: str = ""  # "Access Token" (shown once by the dashboard)
+    NO1API_API_VERSION: str = "v19.0"  # "API Version"
+    NO1API_PHONE_NUMBER_ID: str = ""  # "Phone Number ID" of the sending number
+    # Pause between two messages of a bulk run (provider rate limiting).
+    NO1API_MIN_INTERVAL_SECONDS: float = 2.0
+    # Most messages one bulk run may contain.
+    WHATSAPP_BULK_MAX: int = 500
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -82,11 +72,6 @@ class Settings(BaseSettings):
         """True once both Supabase values are set. Lets calling code fail
         with a clear message instead of a confusing client error."""
         return bool(self.SUPABASE_URL) and bool(self.SUPABASE_KEY)
-
-    @property
-    def has_whatsapp_config(self) -> bool:
-        """True once both WhatsApp values are set."""
-        return bool(self.WHATSAPP_API_KEY) and bool(self.WHATSAPP_PHONE_NUMBER_ID)
 
 
 @lru_cache
