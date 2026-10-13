@@ -25,5 +25,14 @@ void main() {
       expect(WhatsAppLink.isUsableNumber(''), isFalse);
       expect(WhatsAppLink.isUsableNumber('1' * 16), isFalse);
     });
+
+    test('international adds the country code to a bare 10-digit number (mirrors the backend)', () {
+      expect(WhatsAppLink.international('7354182970'), '917354182970');
+      expect(WhatsAppLink.international('07354182970'), '917354182970');
+      expect(WhatsAppLink.international('+917354182970'), '917354182970');
+      expect(WhatsAppLink.international('917354182970'), '917354182970');
+      expect(WhatsAppLink.international('+1 415 555 0123'), '14155550123');
+      expect(WhatsAppLink.international('7354182970', countryCode: ''), '7354182970');
+    });
   });
 }

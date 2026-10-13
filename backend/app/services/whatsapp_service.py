@@ -49,7 +49,7 @@ from app.services.reports_service import (
     is_unique_violation,
     safe_error,
 )
-from app.services.users_service import normalize_whatsapp_number
+from app.services.users_service import normalize_whatsapp_number, to_international
 
 logger = logging.getLogger("numberspeaks")
 
@@ -119,7 +119,7 @@ def _eligibility(row: dict) -> Tuple[Optional[str], Optional[str]]:
         return None, "The saved WhatsApp number is not valid."
     if not number:
         return None, "No WhatsApp number saved."
-    return number, None
+    return to_international(number, get_settings().DEFAULT_COUNTRY_CODE), None
 
 
 def _attempt(
@@ -149,12 +149,27 @@ def _attempt(
         db.table("bonus_results").select("whatsapp_send_status").eq("owner_id", owner_id).eq("id", bonus_result_id)
         .limit(1).execute().data
     )
-    if last and last[0].get("whatsapp_send_status") == "unknown" and not acknowledge_unknown:
+    previous = last[0].get("whatsapp_send_status") if last else None
+    if previous in ("unknown", "queued") and not acknowledge_unknown:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="The previous attempt's outcome is unknown, so this message may already have been delivered. "
-            "Check WhatsApp, then confirm that you want to send it again.",
+            detail=(
+                "The previous attempt's outcome is unknown, so this message may already have been delivered. "
+                if previous == "unknown"
+                else "This message is queued with No1API and may still arrive. "
+            )
+            + "Check WhatsApp, then confirm that you want to send it again.",
         )
+    if previous == "queued":
+        # The admin says the queued message never arrived. Close that attempt so the
+        # one-active-attempt rule lets a new one in; the history row is kept.
+        db.table("whatsapp_sends").update(
+            {
+                "status": "failed",
+                "error_message": "Queued, but the admin reported it was not received; sent again.",
+                "updated_at": _now().isoformat(),
+            }
+        ).eq("owner_id", owner_id).eq("bonus_result_id", bonus_result_id).eq("status", "queued").execute()
     try:
         inserted = (
             db.table("whatsapp_sends")
@@ -254,6 +269,7 @@ def send_test_message(db: Client, owner_id: str, payload: WhatsAppTestRequest) -
     number = normalize_whatsapp_number(payload.whatsapp_number)
     if number is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A test number is required.")
+    number = to_international(number, get_settings().DEFAULT_COUNTRY_CODE)
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The message cannot be empty.")

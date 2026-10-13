@@ -438,7 +438,13 @@ class _ResultsBodyState extends State<_ResultsBody> {
   }
 
   Future<void> _sendWhatsApp(BonusResult result) async {
-    final outcome = await showWhatsAppMessageDialog(context, result: result);
+    final outcome = await showWhatsAppMessageDialog(
+      context,
+      result: result,
+      onUpdated: (updated) {
+        if (mounted) setState(() => _replace(updated));
+      },
+    );
     if (outcome == null || !mounted) return;
     if (outcome.result != null) setState(() => _replace(outcome.result!));
     // The server may know better than the screen (e.g. a send already in flight).
@@ -976,11 +982,11 @@ class _ResultsBodyState extends State<_ResultsBody> {
     }
     // 'sending' that survives a reload means a send never finished: it may be
     // retried (the server still refuses a duplicate while one is truly in flight).
-    final canSend = r.hasWhatsAppNumber && !r.isAccepted;
+    final canSend = r.hasWhatsAppNumber && !r.isSent;
     final label = r.isSent
         ? 'Sent'
         : r.isQueued
-            ? 'Queued'
+            ? 'Resend'
         : r.canRetrySend
             ? 'Retry send'
             : 'Auto Send WhatsApp';

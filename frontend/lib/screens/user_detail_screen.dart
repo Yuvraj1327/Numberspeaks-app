@@ -207,6 +207,9 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
     final outcome = await showWhatsAppMessageDialog(
       context,
       result: result.copyWith(whatsappNumber: number),
+      onUpdated: (updated) {
+        if (mounted) setState(() => _result = updated);
+      },
     );
     if (outcome == null || !mounted) return;
     if (outcome.result != null) setState(() => _result = outcome.result);
@@ -614,7 +617,7 @@ class _WhatsAppCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = result;
-    final canSend = r != null && r.hasPayableBonus && number != null && !r.isAccepted;
+    final canSend = r != null && r.hasPayableBonus && number != null && !r.isSent;
 
     String? reason;
     if (r != null && !r.hasPayableBonus) {
@@ -669,7 +672,7 @@ class _WhatsAppCard extends StatelessWidget {
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.send_outlined, size: 18),
-                label: Text(r.isSent ? 'Sent' : r.isQueued ? 'Queued' : r.canRetrySend ? 'Retry send' : 'Auto Send WhatsApp'),
+                label: Text(r.isSent ? 'Sent' : r.isQueued ? 'Resend' : r.canRetrySend ? 'Retry send' : 'Auto Send WhatsApp'),
               ),
               if (reason != null)
                 Padding(

@@ -11,8 +11,8 @@ class WhatsAppSendRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000, description="The (possibly edited) text to send.")
     acknowledge_unknown: bool = Field(
         False,
-        description="Required to re-send a message whose last attempt ended 'unknown' (it may already have "
-        "been delivered): the admin confirms they checked.",
+        description="Required to re-send a message whose last attempt ended 'unknown' or is still 'queued' "
+        "(it may already be delivered): the admin confirms they checked.",
     )
 
 

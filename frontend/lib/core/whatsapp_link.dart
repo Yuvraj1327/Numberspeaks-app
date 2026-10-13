@@ -15,6 +15,21 @@ class WhatsAppLink {
   /// The number as digits only, country code first.
   static String digitsOnly(String number) => number.replaceAll(RegExp(r'[^0-9]'), '');
 
+  /// The country code the backend adds to a bare 10-digit number when sending
+  /// (backend setting DEFAULT_COUNTRY_CODE). Used only to SHOW where a message
+  /// will go; the backend is the one that applies it.
+  static const String defaultCountryCode = '91';
+
+  /// The number WhatsApp will actually be given: country code first, no "+".
+  /// Mirrors backend `to_international`.
+  static String international(String number, {String countryCode = defaultCountryCode}) {
+    final text = number.trim();
+    var digits = digitsOnly(text);
+    if (countryCode.isEmpty || text.startsWith('+')) return digits;
+    if (digits.length == 11 && digits.startsWith('0')) digits = digits.substring(1);
+    return digits.length == 10 ? '$countryCode$digits' : digits;
+  }
+
   /// The same range the backend accepts (7–15 digits).
   static bool isUsableNumber(String number) {
     final digits = digitsOnly(number);

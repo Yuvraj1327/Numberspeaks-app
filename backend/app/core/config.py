@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     WHATSAPP_API_KEY: str = ""
     NO1API_API_VERSION: str = "v19.0"  # "API Version"
     NO1API_PHONE_NUMBER_ID: str = ""  # "Phone Number ID" of the sending number
+    # Country code added to saved numbers that have none (10-digit local numbers), e.g. "91" for India.
+    # Used only when sending; saved numbers are never rewritten. Leave empty to disable.
+    DEFAULT_COUNTRY_CODE: str = "91"
     # Pause between two messages of a bulk run (provider rate limiting).
     NO1API_MIN_INTERVAL_SECONDS: float = 2.0
     # Most messages one bulk run may contain.

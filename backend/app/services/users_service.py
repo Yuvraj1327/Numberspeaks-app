@@ -47,6 +47,24 @@ def normalize_whatsapp_number(raw: Optional[str]) -> Optional[str]:
     return ("+" if text.startswith("+") else "") + digits
 
 
+def to_international(number: str, default_country_code: str = "") -> str:
+    """The digits WhatsApp needs: country code first, no '+'.
+
+    A number saved with a leading '+' (or already longer than a local number) is used
+    as typed. A bare 10-digit local number gets `default_country_code`, and a local
+    number with a trunk '0' (11 digits starting with 0) loses the 0 first. Saved
+    numbers are never rewritten: this only decides what is sent.
+    """
+    text = (number or "").strip()
+    digits = re.sub(r"\D", "", text)
+    cc = re.sub(r"\D", "", default_country_code or "")
+    if not cc or text.startswith("+"):
+        return digits
+    if len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    return cc + digits if len(digits) == 10 else digits
+
+
 def get_user(db: Client, owner_id: str, user_id: str) -> Optional[dict]:
     if not is_valid_uuid(user_id):
         return None

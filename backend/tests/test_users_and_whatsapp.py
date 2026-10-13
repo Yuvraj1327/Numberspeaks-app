@@ -310,13 +310,52 @@ def test_a_queued_message_is_saved_as_queued_blocks_resending_and_is_not_called_
     assert log["status"] == "queued" and log["provider_message_id"] == "q-1" and log["provider_status"] == "queued"
     shown = a.results(rid)["Rahul"]
     assert shown["send_status"] == "queued" and shown["sent_at"] is None
-    # No duplicate while queued, even with the unknown-acknowledgement flag.
-    again = a.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-send",
-                   json={"message": "x", "acknowledge_unknown": True})
-    assert again.status_code == 409 and len(provider["calls"]) == 1
+    # No silent duplicate while queued.
+    assert send(a, rid, row).status_code == 409 and len(provider["calls"]) == 1
 
 
 def test_test_status_reports_the_credential_source_name_only(a):
     body = a.get("/whatsapp/test-status").json()
     assert body["credential_source"] is None  # tests blank the token variables
     assert "token" not in str(body).lower().replace("credential_source", "")
+
+
+@pytest.mark.parametrize("saved, expected", [
+    ("7354182970", "917354182970"),          # bare 10-digit local number -> country code added
+    ("07354182970", "917354182970"),         # trunk 0 dropped
+    ("+917354182970", "917354182970"),       # '+' numbers are used as typed
+    ("917354182970", "917354182970"),        # already has the country code
+    ("+14155550123", "14155550123"),         # other countries untouched
+    ("98765-43210", "919876543210"),
+])
+def test_to_international(saved, expected):
+    from app.services.users_service import to_international
+
+    assert to_international(saved, "91") == expected
+
+
+def test_to_international_can_be_disabled():
+    from app.services.users_service import to_international
+
+    assert to_international("7354182970", "") == "7354182970"
+
+
+def test_a_10_digit_saved_number_is_sent_with_the_country_code_and_not_rewritten(a, provider, fake_db):
+    rid, row = user_id(a)
+    a.patch(f"/users/{row['user_id']}", json={"whatsapp_number": "7354182970"})
+    send(a, rid, row)
+    assert provider["calls"][0][0] == "917354182970"
+    assert fake_db.tables["whatsapp_sends"][0]["whatsapp_number"] == "917354182970"
+    assert a.get(f"/users/{row['user_id']}").json()["whatsapp_number"] == "7354182970"
+
+
+def test_a_queued_message_that_never_arrived_can_be_resent_only_after_acknowledgement(a, provider, fake_db):
+    rid, row = numbered(a)
+    provider["behaviour"] = lambda n, m: SendOutcome("q-1", status="queued", provider_status="queued")
+    send(a, rid, row)
+    assert send(a, rid, row).status_code == 409                       # no silent duplicate
+    ok = a.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-send",
+                json={"message": "again", "acknowledge_unknown": True})
+    assert ok.status_code == 200 and ok.json()["send_status"] == "queued"
+    assert [x["status"] for x in fake_db.tables["whatsapp_sends"]] == ["failed", "queued"]  # history kept
+    assert len(provider["calls"]) == 2
