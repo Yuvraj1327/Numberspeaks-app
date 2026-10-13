@@ -163,3 +163,19 @@ def test_other_admin_cannot_bulk_send_or_read_progress(a, b, week, provider):
 def test_unknown_batch_is_404(a, week, provider):
     rid, _ = week
     assert a.get(f"/reports/{rid}/whatsapp-bulk/not-a-uuid").status_code == 404
+
+
+def test_bulk_skips_users_whose_last_outcome_is_unknown(a, week, provider):
+    rid, res = week
+    pass_test_gate(a)
+
+    def odd(n, m):
+        raise no1api_client.ProviderOutcomeUnknown("answered 200, no id")
+
+    provider["behaviour"] = odd
+    a.post(f"/reports/{rid}/results/{res['Amy']['bonus_result_id']}/whatsapp-send", json={"message": "x"})
+    provider["behaviour"] = lambda n, m: SendOutcome("pm")
+    provider["calls"].clear()
+    p = final(a, rid, bulk(a, rid, items(res, "Amy", "Bo")))
+    assert [c[1] for c in provider["calls"]] == ["hi Bo"]
+    assert any("unknown" in s["reason"].lower() for s in p["skipped"])

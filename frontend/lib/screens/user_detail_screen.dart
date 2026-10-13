@@ -602,6 +602,8 @@ class _WhatsAppCard extends StatelessWidget {
         return 'Sending (not finished)';
       case 'failed':
         return 'Failed${r.sendError == null ? '' : ': ${r.sendError}'}';
+      case 'unknown':
+        return 'Unknown${r.sendError == null ? '' : ': ${r.sendError}'}';
       default:
         return 'Pending';
     }
@@ -665,7 +667,7 @@ class _WhatsAppCard extends StatelessWidget {
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.send_outlined, size: 18),
-                label: Text(r.isSent ? 'Sent' : (r.isSendFailed || r.isSending) ? 'Retry send' : 'Auto Send WhatsApp'),
+                label: Text(r.isSent ? 'Sent' : r.canRetrySend ? 'Retry send' : 'Auto Send WhatsApp'),
               ),
               if (reason != null)
                 Padding(

@@ -9,6 +9,11 @@ class WhatsAppSendRequest(BaseModel):
     # The recipient is NOT taken from the request: the server sends to the
     # number saved for the user, so a client cannot redirect a message.
     message: str = Field(..., min_length=1, max_length=1000, description="The (possibly edited) text to send.")
+    acknowledge_unknown: bool = Field(
+        False,
+        description="Required to re-send a message whose last attempt ended 'unknown' (it may already have "
+        "been delivered): the admin confirms they checked.",
+    )
 
 
 class WhatsAppSendResponse(BaseModel):

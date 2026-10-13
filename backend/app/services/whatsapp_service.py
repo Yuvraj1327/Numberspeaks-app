@@ -123,7 +123,13 @@ def _eligibility(row: dict) -> Tuple[Optional[str], Optional[str]]:
 
 
 def _attempt(
-    db: Client, owner_id: str, report_id: str, row: dict, message: str, batch_id: Optional[str] = None
+    db: Client,
+    owner_id: str,
+    report_id: str,
+    row: dict,
+    message: str,
+    batch_id: Optional[str] = None,
+    acknowledge_unknown: bool = False,
 ) -> WhatsAppSendResponse:
     """Validate, record a 'sending' attempt, call the provider, record the outcome.
     Raises HTTPException for anything refused BEFORE the provider was contacted."""
@@ -137,6 +143,18 @@ def _attempt(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The message cannot be empty.")
 
     _expire_stale_sending(db, owner_id, bonus_result_id)
+    # A re-send after an 'unknown' outcome could be a duplicate (the first message may
+    # already have been delivered), so it needs the admin's explicit acknowledgement.
+    last = (
+        db.table("bonus_results").select("whatsapp_send_status").eq("owner_id", owner_id).eq("id", bonus_result_id)
+        .limit(1).execute().data
+    )
+    if last and last[0].get("whatsapp_send_status") == "unknown" and not acknowledge_unknown:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The previous attempt's outcome is unknown, so this message may already have been delivered. "
+            "Check WhatsApp, then confirm that you want to send it again.",
+        )
     try:
         inserted = (
             db.table("whatsapp_sends")
@@ -166,14 +184,18 @@ def _attempt(
 
     try:
         outcome = no1api_client.send_text(number, message)
-    except ProviderOutcomeUnknown:
-        return _finish(db, owner_id, bonus_result_id, attempt_id, "unknown", error=UNKNOWN_OUTCOME)
+    except ProviderOutcomeUnknown as exc:
+        logger.warning("No1API outcome unknown for result %s: %s", bonus_result_id, exc)
+        return _finish(db, owner_id, bonus_result_id, attempt_id, "unknown", error=str(exc) or UNKNOWN_OUTCOME)
     except (ProviderSendError, ProviderNotConfigured) as exc:
         return _finish(db, owner_id, bonus_result_id, attempt_id, "failed", error=str(exc) or "The provider rejected the message.")
     except Exception as exc:  # noqa: BLE001
         # Could have failed before or after the provider processed it: not provably unsent.
         logger.error("No1API send failed unexpectedly (%s)", safe_error(exc))
-        return _finish(db, owner_id, bonus_result_id, attempt_id, "unknown", error=UNKNOWN_OUTCOME)
+        return _finish(
+            db, owner_id, bonus_result_id, attempt_id, "unknown",
+            error=f"Unexpected error in the server ({type(exc).__name__}). {UNKNOWN_OUTCOME}",
+        )
     return _finish(db, owner_id, bonus_result_id, attempt_id, "sent", provider_id=outcome.provider_message_id)
 
 
@@ -207,7 +229,7 @@ def send_bonus_message(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No result found with id {bonus_result_id}")
     _require_provider()
-    return _attempt(db, owner_id, report_id, row, payload.message)
+    return _attempt(db, owner_id, report_id, row, payload.message, acknowledge_unknown=payload.acknowledge_unknown)
 
 
 # --- test number ------------------------------------------------------------------
@@ -232,8 +254,8 @@ def send_test_message(db: Client, owner_id: str, payload: WhatsAppTestRequest) -
     try:
         provider_id = no1api_client.send_text(number, message).provider_message_id
         final = "sent"
-    except ProviderOutcomeUnknown:
-        final, error = "unknown", UNKNOWN_OUTCOME
+    except ProviderOutcomeUnknown as exc:
+        final, error = "unknown", str(exc) or UNKNOWN_OUTCOME
     except (ProviderSendError, ProviderNotConfigured) as exc:
         final, error = "failed", str(exc) or "The provider rejected the message."
     except Exception as exc:  # noqa: BLE001
@@ -311,6 +333,8 @@ def start_bulk(
             reason = "Already sent."
         if reason is None and row.get("whatsapp_send_status") == "sending":
             reason = "A send is already in progress."
+        if reason is None and row.get("whatsapp_send_status") == "unknown":
+            reason = "Last attempt's outcome is unknown. Check WhatsApp, then retry this user individually."
         if not item.message.strip():
             reason = reason or "Empty message."
         if reason:

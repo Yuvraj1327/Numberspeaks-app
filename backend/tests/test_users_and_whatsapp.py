@@ -180,7 +180,7 @@ def test_unexpected_provider_error_is_unknown_without_leaking_details(a, provide
 
     provider["behaviour"] = boom
     body = send(a, rid, row).json()
-    assert body["send_status"] == "unknown" and "secret" not in str(body)
+    assert body["send_status"] == "unknown" and "secret" not in str(body) and "RuntimeError" in body["send_error"]
 
 
 def test_a_send_already_in_progress_blocks_a_second_one(a, provider, fake_db):
@@ -203,7 +203,10 @@ def test_a_stale_sending_attempt_becomes_unknown_and_retry_is_allowed(a, provide
          "status": "sending"}
     ).execute()
     fake_db.tables["whatsapp_sends"][0]["created_at"] = "2020-01-01T00:00:00+00:00"
-    assert send(a, rid, row).json()["send_status"] == "sent"
+    assert send(a, rid, row).status_code == 409  # expired -> unknown -> needs the admin's acknowledgement
+    ok = a.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-send",
+                json={"message": "again", "acknowledge_unknown": True})
+    assert ok.json()["send_status"] == "sent"
     assert fake_db.tables["whatsapp_sends"][0]["status"] == "unknown"
     assert "unknown" in fake_db.tables["whatsapp_sends"][0]["error_message"]
 
@@ -268,7 +271,14 @@ def test_an_unanswered_request_is_unknown_not_sent_and_can_be_retried_explicitly
     assert send(a, rid, row).json()["send_status"] == "unknown"
     assert a.results(rid)["Rahul"]["send_status"] == "unknown"
     provider["behaviour"] = lambda n, m: SendOutcome("pm-9")
-    assert send(a, rid, row).json()["send_status"] == "sent"
+    # A re-send after 'unknown' could be a duplicate: refused until the admin acknowledges.
+    calls_before = len(provider["calls"])
+    r = send(a, rid, row)
+    assert r.status_code == 409 and "unknown" in r.json()["detail"].lower()
+    assert len(provider["calls"]) == calls_before
+    ok = a.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-send",
+                json={"message": "again", "acknowledge_unknown": True})
+    assert ok.json()["send_status"] == "sent"
 
 
 def test_an_invalid_saved_number_is_not_sent(a, provider, fake_db):
@@ -276,3 +286,16 @@ def test_an_invalid_saved_number_is_not_sent(a, provider, fake_db):
     next(u for u in fake_db.tables["users"])["whatsapp_number"] = "12"  # bypasses normalisation
     assert send(a, rid, row).status_code == 422
     assert provider["calls"] == []
+
+
+def test_the_providers_answer_is_saved_for_an_unknown_outcome(a, provider, fake_db):
+    rid, row = numbered(a)
+
+    def odd(n, m):
+        raise ProviderOutcomeUnknown("No1API answered HTTP 200: {\"status\": \"ok\"} (no message id found)")
+
+    provider["behaviour"] = odd
+    body = send(a, rid, row).json()
+    assert body["send_status"] == "unknown" and "HTTP 200" in body["send_error"]
+    assert "HTTP 200" in fake_db.tables["whatsapp_sends"][0]["error_message"]
+    assert "HTTP 200" in a.results(rid)["Rahul"]["send_error"]

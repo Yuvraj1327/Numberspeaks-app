@@ -446,13 +446,14 @@ class _ResultsBodyState extends State<_ResultsBody> {
   }
 
   /// Can be picked for a bulk send: payable, has a usable number, and not
-  /// already Sent / being sent. (Failed and Unknown ones are picked on purpose
-  /// to retry them.)
+  /// already Sent / being sent. Failed ones are picked on purpose to retry them;
+  /// Unknown ones may already be delivered, so they are retried one by one only.
   bool _selectable(BonusResult r) =>
       r.hasPayableBonus &&
       WhatsAppLink.isUsableNumber(r.whatsappNumber ?? '') &&
       !r.isSent &&
-      !r.isSending;
+      !r.isSending &&
+      !r.isSendUnknown;
 
   List<BonusResult> get _selectedResults =>
       _results.where((r) => _selected.contains(r.bonusResultId) && _selectable(r)).toList();
@@ -978,7 +979,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
     final canSend = r.hasWhatsAppNumber && !r.isSent;
     final label = r.isSent
         ? 'Sent'
-        : (r.isSendFailed || r.isSending)
+        : r.canRetrySend
             ? 'Retry send'
             : 'Auto Send WhatsApp';
     return Column(

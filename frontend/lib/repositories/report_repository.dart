@@ -270,8 +270,14 @@ class ReportRepository extends ChangeNotifier {
     required String reportId,
     required String bonusResultId,
     required String message,
+    bool acknowledgeUnknown = false,
   }) async {
-    final result = await _whatsappApi.send(reportId: reportId, bonusResultId: bonusResultId, message: message);
+    final result = await _whatsappApi.send(
+      reportId: reportId,
+      bonusResultId: bonusResultId,
+      message: message,
+      acknowledgeUnknown: acknowledgeUnknown,
+    );
     _changed(structural: false);
     return result;
   }

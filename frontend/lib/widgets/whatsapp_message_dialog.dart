@@ -53,6 +53,10 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
   bool _busy = false;
   bool _attempted = false;
   bool _refresh = false;
+
+  /// For a message whose last attempt ended 'unknown' (it may already be on the
+  /// user's phone): the admin must confirm they checked before a re-send.
+  bool _checkedUnknown = false;
   String? _error;
 
   /// The last status the server actually reported (what to fall back to when
@@ -118,7 +122,8 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
       return;
     }
     if (!WhatsAppLink.isUsableNumber(_number)) {
-      setState(() => _error = 'This number does not look valid. Edit it and include the country code.');
+      setState(
+          () => _error = 'This number does not look valid. Edit it and include the country code.');
       return;
     }
 
@@ -134,6 +139,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
             reportId: _result.reportId,
             bonusResultId: _result.bonusResultId,
             message: text,
+            acknowledgeUnknown: _knownStatus == 'unknown' && _checkedUnknown,
           );
       if (!mounted) return;
       _knownStatus = sent.status;
@@ -145,7 +151,14 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
           clearSendError: sent.error == null,
           sentAt: sent.sentAt,
         );
-        _error = sent.status == 'failed' ? (sent.error ?? 'Sending failed.') : null;
+        _error = switch (sent.status) {
+          'failed' => sent.error ?? 'Sending failed.',
+          'unknown' =>
+            'Not confirmed: ${sent.error ?? 'the provider gave no clear answer.'} The message may '
+                'already have been delivered. Check WhatsApp before sending again.',
+          _ => null,
+        };
+        _checkedUnknown = false;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -164,7 +177,8 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
         } else if (refused) {
           _error = e.message.isNotEmpty ? '${e.message} Nothing was sent.' : e.userMessage;
         } else {
-          _error = 'Could not confirm the result. ${e.userMessage} The message may or may not have been '
+          _error =
+              'Could not confirm the result. ${e.userMessage} The message may or may not have been '
               'sent; retrying will not send it twice.';
         }
       });
@@ -182,7 +196,8 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
   @override
   Widget build(BuildContext context) {
     final sent = _result.isSent;
-    final retry = _result.isSendFailed || _attempted && !sent;
+    final retry = _result.canRetrySend || _attempted && !sent;
+    final needsCheck = _knownStatus == 'unknown' && !_busy;
     return PopScope(
       canPop: false,
       child: AlertDialog(
@@ -200,6 +215,22 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
               const SizedBox(height: AppSpacing.xs),
               _line(Icons.savings_outlined, 'Bonus amount', Formatters.rupees(_result.payable),
                   valueColor: AppTheme.success),
+              if (needsCheck) ...[
+                const SizedBox(height: AppSpacing.sm),
+                const Text(
+                  'A previous attempt for this user is Unknown: the message may already have been '
+                  'delivered. Check WhatsApp first.',
+                  style: TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w600),
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _checkedUnknown,
+                  onChanged: (v) => setState(() => _checkedUnknown = v ?? false),
+                  title: const Text('I checked: it was not delivered. Send again.',
+                      style: TextStyle(fontSize: 13)),
+                ),
+              ],
               if (_result.isSending && !_busy) ...[
                 const SizedBox(height: AppSpacing.sm),
                 const Text(
@@ -253,7 +284,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
           ),
           if (!sent)
             ElevatedButton.icon(
-              onPressed: _busy ? null : _confirmAndSend,
+              onPressed: (_busy || needsCheck && !_checkedUnknown) ? null : _confirmAndSend,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.success,
                 foregroundColor: Colors.white,

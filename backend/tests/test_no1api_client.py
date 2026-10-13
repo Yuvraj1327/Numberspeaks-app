@@ -74,6 +74,15 @@ def test_unproven_outcomes_are_unknown(monkeypatch, handler):
         c.send_text("919876543210", "x")
 
 
+def test_unknown_outcome_says_what_the_provider_answered_without_the_token(monkeypatch):
+    mock(monkeypatch, lambda: resp(200, {"status": "ok", "echo": "secret-token"}))
+    with pytest.raises(c.ProviderOutcomeUnknown) as e:
+        c.send_text("919876543210", "x")
+    text = str(e.value)
+    assert "HTTP 200" in text and '"status"' in text and "no message id" in text
+    assert "secret-token" not in text and "[redacted]" in text
+
+
 def test_timeout_is_unknown_but_connect_error_is_failed(monkeypatch):
     def timeout():
         raise httpx.ReadTimeout("t")

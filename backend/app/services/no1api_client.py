@@ -64,9 +64,11 @@ class ProviderSendError(Exception):
 
 
 class ProviderOutcomeUnknown(Exception):
-    """The request may have reached the provider but no answer was received
-    (timeout, connection dropped, 5xx). The message may or may not have been
-    sent; it is recorded as 'unknown', never as sent or failed."""
+    """The request may have reached the provider but acceptance was not proven
+    (timeout, dropped connection, 5xx, or a 200 without a message id). The
+    message may or may not have been sent; it is recorded as 'unknown', never
+    as sent or failed. str(exc), when set, says what the provider answered and
+    is safe to store and show (the token is redacted)."""
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,17 @@ def _messages_url() -> str:
     path = re.sub(r"/{2,}", "/", parts.path).rstrip("/")  # the dashboard shows "//api/meta"
     path = f"{path}/{s.NO1API_API_VERSION.strip().strip('/')}/{s.NO1API_PHONE_NUMBER_ID.strip()}/messages"
     return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _describe(response: "httpx.Response") -> str:
+    """What the provider answered, for diagnosing 'unknown' outcomes. Never
+    contains the access token."""
+    token = get_settings().NO1API_API_KEY.strip()
+    text = response.text or ""
+    if token:
+        text = text.replace(token, "[redacted]")
+    text = re.sub(r"\s+", " ", text).strip()[:300] or "(empty body)"
+    return f"No1API answered HTTP {response.status_code}: {text}"
 
 
 def _digits(number: str) -> str:
@@ -111,10 +124,12 @@ def send_text(number: str, message: str) -> SendOutcome:
             headers={"Authorization": f"Bearer {s.NO1API_API_KEY.strip()}"},
             timeout=TIMEOUT,
         )
-    except httpx.ConnectError as exc:
+    except httpx.ConnectError:
         raise ProviderSendError("Could not reach No1API. Nothing was sent.") from None
     except (httpx.TimeoutException, httpx.TransportError) as exc:
-        raise ProviderOutcomeUnknown() from None
+        raise ProviderOutcomeUnknown(
+            f"No answer from No1API ({type(exc).__name__}); the message may or may not have been sent."
+        ) from None
 
     try:
         data = response.json()
@@ -126,10 +141,10 @@ def send_text(number: str, message: str) -> SendOutcome:
         if isinstance(messages, list) and messages and isinstance(messages[0], dict) and messages[0].get("id"):
             return SendOutcome(provider_message_id=str(messages[0]["id"]))
         # 200 without a message id: acceptance is not proven.
-        raise ProviderOutcomeUnknown()
+        raise ProviderOutcomeUnknown(_describe(response) + " (no message id found)")
 
     if response.status_code >= 500:
-        raise ProviderOutcomeUnknown()
+        raise ProviderOutcomeUnknown(_describe(response))
 
     error = data.get("error") if isinstance(data, dict) else None
     code = error.get("code") if isinstance(error, dict) else None

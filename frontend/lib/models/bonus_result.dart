@@ -36,7 +36,8 @@ class BonusResult {
   final String? calculatedAt;
 
   /// Latest WhatsApp send attempt: 'pending' (never attempted), 'sending',
-  /// 'sent' (the provider confirmed) or 'failed' (can be retried).
+  /// 'sent' (the provider confirmed), 'failed' (rejected; can be retried) or
+  /// 'unknown' (may or may not have been delivered; check WhatsApp first).
   final String sendStatus;
   final String? sendError;
   final String? sentAt;
@@ -92,6 +93,10 @@ class BonusResult {
   bool get isSent => sendStatus == 'sent';
   bool get isSending => sendStatus == 'sending';
   bool get isSendFailed => sendStatus == 'failed';
+  bool get isSendUnknown => sendStatus == 'unknown';
+
+  /// A previous attempt exists that did not succeed, so the button says "Retry send".
+  bool get canRetrySend => isSendFailed || isSendUnknown || isSending;
 
   /// A copy with the fields the app changes locally after a successful save
   /// (a new WhatsApp number, or a new send status). Everything else

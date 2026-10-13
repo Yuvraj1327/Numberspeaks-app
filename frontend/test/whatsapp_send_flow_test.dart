@@ -51,7 +51,11 @@ class _Backend implements HttpClientAdapter {
       body = _progress('completed', sent: 1, failed: 1);
     } else if (o.method == 'POST' && path.endsWith('/whatsapp-send')) {
       status = 200;
-      body = {'bonus_result_id': 'b1', 'send_status': 'sent', 'sent_at': '2026-10-12T10:00:00+00:00'};
+      body = {
+        'bonus_result_id': 'b1',
+        'send_status': 'sent',
+        'sent_at': '2026-10-12T10:00:00+00:00'
+      };
     } else if (RegExp(r'/reports/[^/]+$').hasMatch(path)) {
       status = 200;
       body = {
@@ -65,8 +69,9 @@ class _Backend implements HttpClientAdapter {
         'updated_at': '2026-10-02T10:00:05+00:00',
       };
     }
-    return ResponseBody.fromString(jsonEncode(body), status,
-        headers: {Headers.contentTypeHeader: ['application/json']});
+    return ResponseBody.fromString(jsonEncode(body), status, headers: {
+      Headers.contentTypeHeader: ['application/json']
+    });
   }
 
   Map<String, dynamic> _progress(String st, {int sent = 0, int failed = 0}) => {
@@ -82,7 +87,12 @@ class _Backend implements HttpClientAdapter {
         'items': failed == 0
             ? <Object>[]
             : [
-                {'bonus_result_id': 'b2', 'user_name': 'Bo', 'send_status': 'failed', 'send_error': 'bad number'}
+                {
+                  'bonus_result_id': 'b2',
+                  'user_name': 'Bo',
+                  'send_status': 'failed',
+                  'send_error': 'bad number'
+                }
               ],
       };
 
@@ -90,7 +100,7 @@ class _Backend implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-BonusResult _result(String id, String name) => BonusResult.fromJson({
+Map<String, dynamic> _rawResult(String id, String name) => {
       'bonus_result_id': id,
       'report_id': 'r1',
       'user_id': 'u-$id',
@@ -104,7 +114,9 @@ BonusResult _result(String id, String name) => BonusResult.fromJson({
       'payable_bonus': 30,
       'calculation_status': 'calculated',
       'send_status': 'pending',
-    });
+    };
+
+BonusResult _result(String id, String name) => BonusResult.fromJson(_rawResult(id, name));
 
 void main() {
   late _Backend backend;
@@ -113,7 +125,8 @@ void main() {
   setUp(() {
     dotenv.testLoad(fileInput: '');
     backend = _Backend();
-    final api = ApiClient(dio: Dio(BaseOptions(baseUrl: 'http://fake/api/v1'))..httpClientAdapter = backend);
+    final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'http://fake/api/v1'))..httpClientAdapter = backend);
     repo = ReportRepository(
       reportsApi: ReportsApiService(api),
       bonusApi: BonusApiService(api),
@@ -124,7 +137,8 @@ void main() {
     );
   });
 
-  Widget host(Widget Function(BuildContext) button) => ChangeNotifierProvider<ReportRepository>.value(
+  Widget host(Widget Function(BuildContext) button) =>
+      ChangeNotifierProvider<ReportRepository>.value(
         value: repo,
         child: MaterialApp(
           theme: AppTheme.light,
@@ -153,7 +167,8 @@ void main() {
 
     await tester.tap(find.text('Confirm & Send'));
     await tester.pumpAndSettle();
-    expect(backend.calls.where((c) => c == 'POST /api/v1/reports/r1/results/1/whatsapp-send'), hasLength(1));
+    expect(backend.calls.where((c) => c == 'POST /api/v1/reports/r1/results/1/whatsapp-send'),
+        hasLength(1));
     expect(find.textContaining('Sent.'), findsOneWidget);
     // The button is gone once sent: no second send is possible from here.
     expect(find.text('Confirm & Send'), findsNothing);
@@ -208,5 +223,40 @@ void main() {
     expect(find.text('Sent: 1'), findsOneWidget);
     expect(find.text('Failed: 1'), findsOneWidget);
     expect(find.textContaining('bad number'), findsOneWidget);
+  });
+
+  testWidgets('an Unknown message needs an explicit "I checked" before it can be re-sent',
+      (tester) async {
+    bigSurface(tester);
+    final unknown = BonusResult.fromJson({
+      ..._rawResult('1', 'Amy'),
+      'send_status': 'unknown',
+      'send_error': 'No1API answered HTTP 200: {} (no message id found)',
+    });
+    await tester.pumpWidget(host((c) => ElevatedButton(
+          onPressed: () => showWhatsAppMessageDialog(c, result: unknown),
+          child: const Text('open'),
+        )));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    Finder send() =>
+        find.ancestor(of: find.text('Retry send'), matching: find.bySubtype<ButtonStyleButton>());
+    expect(find.textContaining('may already have been'), findsOneWidget);
+    expect(tester.widget<ButtonStyleButton>(send()).onPressed, isNull);
+
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pump();
+    expect(tester.widget<ButtonStyleButton>(send()).onPressed, isNotNull);
+    await tester.tap(send());
+    await tester.pumpAndSettle();
+    expect(backend.calls.where((c) => c.endsWith('/whatsapp-send')), hasLength(1));
+  });
+
+  test('Unknown is shown as Unknown, never as Pending', () {
+    final r = BonusResult.fromJson({..._rawResult('1', 'Amy'), 'send_status': 'unknown'});
+    expect(r.isSendUnknown, isTrue);
+    expect(r.canRetrySend, isTrue);
+    expect(r.isSent, isFalse);
   });
 }

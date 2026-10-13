@@ -97,10 +97,11 @@ class WhatsAppApiService {
     required String reportId,
     required String bonusResultId,
     required String message,
+    bool acknowledgeUnknown = false,
   }) async {
     final json = await _client.post(
       '/reports/$reportId/results/$bonusResultId/whatsapp-send',
-      body: {'message': message},
+      body: {'message': message, if (acknowledgeUnknown) 'acknowledge_unknown': true},
       // The provider call happens inside this request.
       receiveTimeout: const Duration(seconds: 60),
     );
