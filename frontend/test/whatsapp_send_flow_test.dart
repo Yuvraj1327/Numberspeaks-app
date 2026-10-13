@@ -79,7 +79,8 @@ class _Backend implements HttpClientAdapter {
         'status': st,
         'total_selected': 2,
         'queued': 2,
-        'sent': sent,
+        'sent': 0,
+        'provider_queued': sent,
         'failed': failed,
         'unknown': 0,
         'pending': 2 - sent - failed,
@@ -220,7 +221,7 @@ void main() {
 
     expect(backend.calls.where((c) => c == 'POST /api/v1/reports/r1/whatsapp-bulk'), hasLength(1));
     expect(find.textContaining('Finished: 2 of 2 processed'), findsOneWidget);
-    expect(find.text('Sent: 1'), findsOneWidget);
+    expect(find.text('Queued: 1'), findsOneWidget);
     expect(find.text('Failed: 1'), findsOneWidget);
     expect(find.textContaining('bad number'), findsOneWidget);
   });
@@ -258,5 +259,13 @@ void main() {
     expect(r.isSendUnknown, isTrue);
     expect(r.canRetrySend, isTrue);
     expect(r.isSent, isFalse);
+  });
+
+  test('Queued is its own status: accepted (never resent) but not "sent"', () {
+    final r = BonusResult.fromJson({..._rawResult('1', 'Amy'), 'send_status': 'queued'});
+    expect(r.isQueued, isTrue);
+    expect(r.isSent, isFalse);
+    expect(r.isAccepted, isTrue);
+    expect(r.canRetrySend, isFalse);
   });
 }

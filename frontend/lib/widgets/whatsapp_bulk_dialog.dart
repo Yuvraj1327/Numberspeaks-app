@@ -419,6 +419,8 @@ class _BulkDialogState extends State<_BulkDialog> {
         LinearProgressIndicator(value: value),
         const SizedBox(height: AppSpacing.sm),
         Wrap(spacing: AppSpacing.md, runSpacing: AppSpacing.xs, children: [
+          Text('Queued: ${p.providerQueued}',
+              style: const TextStyle(color: AppTheme.teal, fontWeight: FontWeight.w700)),
           Text('Sent: ${p.sent}',
               style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700)),
           Text('Failed: ${p.failed}',

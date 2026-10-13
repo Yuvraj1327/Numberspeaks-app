@@ -28,7 +28,7 @@ import 'reports_screen.dart';
 ///  - the most recently *calculated* report's real rows, for Total Loss,
 ///    Total Payable and the WhatsApp counts. Nothing is estimated.
 ///
-/// "WhatsApp Sent" counts users whose message the provider confirmed;
+/// "WhatsApp Queued/Sent" counts users whose message No1API accepted (queued or sent);
 /// "WhatsApp Pending" is everyone with a payable bonus who is not Sent yet.
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
@@ -115,7 +115,7 @@ class _DashboardTabState extends State<DashboardTab> {
         .fold<double>(0, (sum, r) => sum + r.profitLoss.abs());
     final payableRows = _results.where((r) => r.hasPayableBonus).toList();
     final totalPayable = payableRows.fold<double>(0, (sum, r) => sum + r.payable);
-    final sent = payableRows.where((r) => r.isSent).length;
+    final sent = payableRows.where((r) => r.isAccepted).length;
     final notSent = payableRows.length - sent;
 
     final latest = _reports.isEmpty ? null : _reports.first;
@@ -189,7 +189,7 @@ class _DashboardTabState extends State<DashboardTab> {
                   color: AppTheme.teal,
                 ),
                 _SummaryTile(
-                  label: 'WhatsApp Sent',
+                  label: 'WhatsApp Queued/Sent',
                   value: '$sent',
                   icon: Icons.chat_bubble_outline,
                   color: AppTheme.success,

@@ -18,7 +18,11 @@ class WhatsAppSendRequest(BaseModel):
 
 class WhatsAppSendResponse(BaseModel):
     bonus_result_id: str
-    send_status: str = Field(..., description="'pending', 'sending', 'sent', 'failed' or 'unknown'.")
+    send_status: str = Field(
+        ...,
+        description="'pending', 'sending', 'queued' (accepted into No1API's queue; not yet confirmed "
+        "sent/delivered), 'sent', 'failed' or 'unknown'.",
+    )
     send_error: Optional[str] = None
     sent_at: Optional[str] = None
 
@@ -52,6 +56,7 @@ class WhatsAppBulkProgress(BaseModel):
     total_selected: int
     queued: int
     skipped: List[BulkSkipped]
+    provider_queued: int = 0
     sent: int = 0
     failed: int = 0
     unknown: int = 0
@@ -73,3 +78,6 @@ class WhatsAppTestResponse(BaseModel):
 class WhatsAppTestStatus(BaseModel):
     tested: bool
     provider_available: bool
+    credential_source: Optional[str] = Field(
+        None, description="NAME of the env var the token is read from (never the token)."
+    )

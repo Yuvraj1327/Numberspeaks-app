@@ -36,6 +36,7 @@ class BonusResult {
   final String? calculatedAt;
 
   /// Latest WhatsApp send attempt: 'pending' (never attempted), 'sending',
+  /// 'queued' (accepted into No1API's queue; NOT yet confirmed sent/delivered),
   /// 'sent' (the provider confirmed), 'failed' (rejected; can be retried) or
   /// 'unknown' (may or may not have been delivered; check WhatsApp first).
   final String sendStatus;
@@ -92,6 +93,10 @@ class BonusResult {
 
   bool get isSent => sendStatus == 'sent';
   bool get isSending => sendStatus == 'sending';
+  bool get isQueued => sendStatus == 'queued';
+
+  /// The provider has the message (queued or sent): it must never be sent again.
+  bool get isAccepted => isQueued || isSent;
   bool get isSendFailed => sendStatus == 'failed';
   bool get isSendUnknown => sendStatus == 'unknown';
 

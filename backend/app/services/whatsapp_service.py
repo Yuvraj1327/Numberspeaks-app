@@ -196,7 +196,10 @@ def _attempt(
             db, owner_id, bonus_result_id, attempt_id, "unknown",
             error=f"Unexpected error in the server ({type(exc).__name__}). {UNKNOWN_OUTCOME}",
         )
-    return _finish(db, owner_id, bonus_result_id, attempt_id, "sent", provider_id=outcome.provider_message_id)
+    return _finish(
+        db, owner_id, bonus_result_id, attempt_id, outcome.status,
+        provider_id=outcome.provider_message_id, provider_status=outcome.provider_status,
+    )
 
 
 def _finish(
@@ -207,13 +210,20 @@ def _finish(
     final: str,
     error: Optional[str] = None,
     provider_id: Optional[str] = None,
+    provider_status: Optional[str] = None,
 ) -> WhatsAppSendResponse:
     now = _now().isoformat()
-    sent_at = now if final == "sent" else None
+    sent_at = now if final == "sent" else None  # 'queued' is NOT sent: no timestamp claims it
     # If this save fails the attempt stays 'sending' (blocking duplicates) and
     # the stale-sending rule later turns it into an 'unknown' outcome.
     db.table("whatsapp_sends").update(
-        {"status": final, "error_message": error, "provider_message_id": provider_id, "updated_at": now}
+        {
+            "status": final,
+            "error_message": error,
+            "provider_message_id": provider_id,
+            "provider_status": provider_status,
+            "updated_at": now,
+        }
     ).eq("id", attempt_id).execute()
     _save_status(db, owner_id, bonus_result_id, final, error, sent_at)
     return WhatsAppSendResponse(bonus_result_id=bonus_result_id, send_status=final, send_error=error, sent_at=sent_at)
@@ -251,9 +261,10 @@ def send_test_message(db: Client, owner_id: str, payload: WhatsAppTestRequest) -
 
     error: Optional[str] = None
     provider_id: Optional[str] = None
+    provider_status: Optional[str] = None
     try:
-        provider_id = no1api_client.send_text(number, message).provider_message_id
-        final = "sent"
+        outcome = no1api_client.send_text(number, message)
+        provider_id, provider_status, final = outcome.provider_message_id, outcome.provider_status, outcome.status
     except ProviderOutcomeUnknown as exc:
         final, error = "unknown", str(exc) or UNKNOWN_OUTCOME
     except (ProviderSendError, ProviderNotConfigured) as exc:
@@ -268,6 +279,7 @@ def send_test_message(db: Client, owner_id: str, payload: WhatsAppTestRequest) -
             "message_body": message,
             "status": final,
             "provider_message_id": provider_id,
+            "provider_status": provider_status,
             "error_message": error,
         }
     ).execute()
@@ -276,9 +288,14 @@ def send_test_message(db: Client, owner_id: str, payload: WhatsAppTestRequest) -
 
 def test_status(db: Client, owner_id: str) -> WhatsAppTestStatus:
     rows = (
-        db.table("whatsapp_test_sends").select("id").eq("owner_id", owner_id).eq("status", "sent").limit(1).execute().data
+        db.table("whatsapp_test_sends").select("id").eq("owner_id", owner_id).in_("status", ["queued", "sent"]).limit(1)
+        .execute().data
     )
-    return WhatsAppTestStatus(tested=bool(rows), provider_available=no1api_client.is_available())
+    return WhatsAppTestStatus(
+        tested=bool(rows),
+        provider_available=no1api_client.is_available(),
+        credential_source=get_settings().no1api_token_source or None,
+    )
 
 
 # --- bulk ---------------------------------------------------------------------------
@@ -331,6 +348,8 @@ def start_bulk(
         _number, reason = _eligibility(row)
         if reason is None and row.get("whatsapp_send_status") == "sent":
             reason = "Already sent."
+        if reason is None and row.get("whatsapp_send_status") == "queued":
+            reason = "Already queued with No1API."
         if reason is None and row.get("whatsapp_send_status") == "sending":
             reason = "A send is already in progress."
         if reason is None and row.get("whatsapp_send_status") == "unknown":
@@ -412,7 +431,7 @@ def bulk_progress(db: Client, owner_id: str, report_id: str, batch_id: str) -> W
         db.table("whatsapp_sends").select("bonus_result_id, status, error_message").eq("owner_id", owner_id).eq("batch_id", batch_id).execute().data
         or []
     )
-    counts: Dict[str, int] = {"sent": 0, "failed": 0, "unknown": 0}
+    counts: Dict[str, int] = {"queued": 0, "sent": 0, "failed": 0, "unknown": 0}
     bad_ids: List[str] = []
     errors: Dict[str, Tuple[str, Optional[str]]] = {}
     for a in attempts:
@@ -440,6 +459,7 @@ def bulk_progress(db: Client, owner_id: str, report_id: str, batch_id: str) -> W
         total_selected=queued + len(skipped),
         queued=queued,
         skipped=skipped,
+        provider_queued=counts["queued"],
         sent=counts["sent"],
         failed=counts["failed"],
         unknown=counts["unknown"],

@@ -451,7 +451,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
   bool _selectable(BonusResult r) =>
       r.hasPayableBonus &&
       WhatsAppLink.isUsableNumber(r.whatsappNumber ?? '') &&
-      !r.isSent &&
+      !r.isAccepted &&
       !r.isSending &&
       !r.isSendUnknown;
 
@@ -466,7 +466,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
   List<BulkSkipPreview> _skippedPreview(Iterable<BonusResult> pool) {
     final out = <BulkSkipPreview>[];
     for (final r in pool) {
-      if (!r.hasPayableBonus || r.isSent) continue;
+      if (!r.hasPayableBonus || r.isAccepted) continue;
       if (!r.hasWhatsAppNumber) {
         out.add(BulkSkipPreview(r.userName, 'No WhatsApp number saved.'));
       } else if (!WhatsAppLink.isUsableNumber(r.whatsappNumber ?? '')) {
@@ -976,9 +976,11 @@ class _ResultsBodyState extends State<_ResultsBody> {
     }
     // 'sending' that survives a reload means a send never finished: it may be
     // retried (the server still refuses a duplicate while one is truly in flight).
-    final canSend = r.hasWhatsAppNumber && !r.isSent;
+    final canSend = r.hasWhatsAppNumber && !r.isAccepted;
     final label = r.isSent
         ? 'Sent'
+        : r.isQueued
+            ? 'Queued'
         : r.canRetrySend
             ? 'Retry send'
             : 'Auto Send WhatsApp';
@@ -994,7 +996,7 @@ class _ResultsBodyState extends State<_ResultsBody> {
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             padding: const EdgeInsets.symmetric(horizontal: 10),
           ),
-          icon: Icon(r.isSent ? Icons.check : Icons.send_outlined, size: 16),
+          icon: Icon(r.isAccepted ? Icons.check : Icons.send_outlined, size: 16),
           label: Text(label, style: const TextStyle(fontSize: 12)),
         ),
         const SizedBox(height: 2),

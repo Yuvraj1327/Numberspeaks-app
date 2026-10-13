@@ -134,7 +134,7 @@ def no_real_provider(monkeypatch):
     from app.services import no1api_client
 
     settings = get_settings()
-    for name in ("NO1API_BASE_URL", "NO1API_API_KEY", "NO1API_PHONE_NUMBER_ID"):
+    for name in ("NO1API_BASE_URL", "NO1API_API_KEY", "WHATSAPP_API_KEY", "NO1API_PHONE_NUMBER_ID"):
         monkeypatch.setattr(settings, name, "")
 
     def blocked(*args, **kwargs):

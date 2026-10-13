@@ -112,7 +112,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
     super.dispose();
   }
 
-  bool get _locked => _busy || _result.isSent;
+  bool get _locked => _busy || _result.isAccepted;
 
   Future<void> _confirmAndSend() async {
     if (_busy) return; // never two requests from one dialog
@@ -195,7 +195,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final sent = _result.isSent;
+    final sent = _result.isAccepted;
     final retry = _result.canRetrySend || _attempted && !sent;
     final needsCheck = _knownStatus == 'unknown' && !_busy;
     return PopScope(
@@ -261,8 +261,11 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
               ),
               const SizedBox(height: AppSpacing.xs),
               if (sent)
-                const Text('Sent. The provider confirmed this message.',
-                    style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700))
+                Text(
+                    _result.isQueued
+                        ? 'Queued with No1API. It has not been confirmed as sent or delivered yet.'
+                        : 'Sent. The provider confirmed this message.',
+                    style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700))
               else if (_busy)
                 const Text('Sending…', style: TextStyle(fontWeight: FontWeight.w700))
               else

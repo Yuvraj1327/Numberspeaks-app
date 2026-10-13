@@ -43,6 +43,24 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+@app.on_event("startup")
+def _log_no1api_configuration() -> None:
+    """Says which settings No1API will use, by NAME only — never a value."""
+    s = get_settings()
+    logger.info(
+        "No1API: token_from=%s base_url_set=%s phone_number_id_set=%s api_version=%s",
+        s.no1api_token_source or "NOT SET",
+        bool(s.NO1API_BASE_URL),
+        bool(s.NO1API_PHONE_NUMBER_ID),
+        s.NO1API_API_VERSION,
+    )
+    if s.WHATSAPP_API_KEY.strip() and s.NO1API_API_KEY.strip() and s.WHATSAPP_API_KEY.strip() != s.NO1API_API_KEY.strip():
+        logger.warning(
+            "No1API: WHATSAPP_API_KEY and NO1API_API_KEY are both set and differ; WHATSAPP_API_KEY is used. "
+            "Delete the one you do not use."
+        )
+
+
 # --- CORS -------------------------------------------------------------
 # Allows the Flutter app (web/mobile) to call this API once it exists.
 app.add_middleware(

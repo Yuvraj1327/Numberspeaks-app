@@ -34,7 +34,8 @@ class StatusPill extends StatelessWidget {
     return StatusPill(label: status.label, color: color);
   }
 
-  /// WhatsApp send status of one result: Pending, Sending, Sent, Failed or Unknown.
+  /// WhatsApp send status of one result: Pending, Sending, Queued, Sent, Failed or Unknown.
+  /// "Queued" = accepted into No1API's queue, not yet confirmed sent/delivered.
   /// "Sent" only ever appears once the backend recorded the provider's
   /// confirmation.
   factory StatusPill.forSend(String sendStatus) {
@@ -43,6 +44,8 @@ class StatusPill extends StatelessWidget {
         return const StatusPill(label: 'Sent', color: AppTheme.success);
       case 'sending':
         return const StatusPill(label: 'Sending', color: AppTheme.blue);
+      case 'queued':
+        return const StatusPill(label: 'Queued', color: AppTheme.teal);
       case 'failed':
         return const StatusPill(label: 'Failed', color: AppTheme.danger);
       case 'unknown':

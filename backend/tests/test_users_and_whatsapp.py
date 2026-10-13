@@ -108,7 +108,7 @@ from app.services.no1api_client import ProviderOutcomeUnknown, ProviderSendError
 @pytest.fixture()
 def provider(monkeypatch):
     """A fake No1API: records calls; `behaviour` decides the outcome."""
-    state = {"calls": [], "behaviour": lambda n, m: SendOutcome(provider_message_id="pm-1")}
+    state = {"calls": [], "behaviour": lambda n, m: SendOutcome(provider_message_id="pm-1", status="sent")}
 
     def send_text(number, message):
         state["calls"].append((number, message))
@@ -164,7 +164,7 @@ def test_failure_is_recorded_and_can_be_retried_once(a, provider, fake_db):
     assert r.status_code == 200 and r.json()["send_status"] == "failed" and r.json()["send_error"] == "provider said no"
     assert a.results(rid)["Rahul"]["send_status"] == "failed"
 
-    provider["behaviour"] = lambda n, m: SendOutcome("pm-2")
+    provider["behaviour"] = lambda n, m: SendOutcome("pm-2", status="sent")
     r2 = send(a, rid, row)
     assert r2.status_code == 200, r2.text
     assert r2.json()["send_status"] == "sent"
@@ -270,7 +270,7 @@ def test_an_unanswered_request_is_unknown_not_sent_and_can_be_retried_explicitly
     provider["behaviour"] = timeout
     assert send(a, rid, row).json()["send_status"] == "unknown"
     assert a.results(rid)["Rahul"]["send_status"] == "unknown"
-    provider["behaviour"] = lambda n, m: SendOutcome("pm-9")
+    provider["behaviour"] = lambda n, m: SendOutcome("pm-9", status="sent")
     # A re-send after 'unknown' could be a duplicate: refused until the admin acknowledges.
     calls_before = len(provider["calls"])
     r = send(a, rid, row)
@@ -299,3 +299,24 @@ def test_the_providers_answer_is_saved_for_an_unknown_outcome(a, provider, fake_
     assert body["send_status"] == "unknown" and "HTTP 200" in body["send_error"]
     assert "HTTP 200" in fake_db.tables["whatsapp_sends"][0]["error_message"]
     assert "HTTP 200" in a.results(rid)["Rahul"]["send_error"]
+
+
+def test_a_queued_message_is_saved_as_queued_blocks_resending_and_is_not_called_sent(a, provider, fake_db):
+    rid, row = numbered(a)
+    provider["behaviour"] = lambda n, m: SendOutcome("q-1", status="queued", provider_status="queued")
+    body = send(a, rid, row).json()
+    assert body["send_status"] == "queued" and body["sent_at"] is None
+    log = fake_db.tables["whatsapp_sends"][0]
+    assert log["status"] == "queued" and log["provider_message_id"] == "q-1" and log["provider_status"] == "queued"
+    shown = a.results(rid)["Rahul"]
+    assert shown["send_status"] == "queued" and shown["sent_at"] is None
+    # No duplicate while queued, even with the unknown-acknowledgement flag.
+    again = a.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-send",
+                   json={"message": "x", "acknowledge_unknown": True})
+    assert again.status_code == 409 and len(provider["calls"]) == 1
+
+
+def test_test_status_reports_the_credential_source_name_only(a):
+    body = a.get("/whatsapp/test-status").json()
+    assert body["credential_source"] is None  # tests blank the token variables
+    assert "token" not in str(body).lower().replace("credential_source", "")

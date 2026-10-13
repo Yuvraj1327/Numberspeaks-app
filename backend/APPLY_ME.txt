@@ -5,6 +5,7 @@ NUMBERSPEAKS BACKEND - Complete Bonus Management (changes-only)
    Optional, once, BEFORE the first new upload: the "claim legacy data" statements at its bottom.
 2a. Run supabase/whatsapp_api_send_schema.sql (additive): whatsapp_sends table + send-status columns.
 2a2. Then run supabase/whatsapp_bulk_schema.sql (additive): attempt audit columns, 'unknown' status, batches, test sends.
+2a3. Then run supabase/whatsapp_queued_schema.sql (additive): 'queued' status + provider queue id/status, queued blocks duplicates.
 2b. Then run supabase/period_referrers_schema.sql (additive, safe to re-run): weekly periods,
    referrers table, manual referral amounts, saved WhatsApp template. Existing reports keep period = NULL.
 3. pip install -r requirements.txt   (and requirements-dev.txt for tests)
@@ -15,4 +16,4 @@ Files you may delete by hand (zips cannot delete; they are now comment-only stub
   app/services/whatsapp_client.py
   app/services/whatsapp_templates.py
 Env: SUPABASE_URL, SUPABASE_KEY (service role, server only); NO1API_BASE_URL, NO1API_API_KEY, NO1API_API_VERSION,
-NO1API_PHONE_NUMBER_ID (server only; from the No1API dashboard: Channel -> API Details). Old WHATSAPP_* vars are removed.
+NO1API_PHONE_NUMBER_ID (server only; from the No1API dashboard: Channel -> API Details). The token is read from WHATSAPP_API_KEY if set, else NO1API_API_KEY (delete the one you don't use).

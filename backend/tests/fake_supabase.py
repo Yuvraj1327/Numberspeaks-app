@@ -43,7 +43,7 @@ UNIQUES: Dict[str, List[Any]] = {
     "bonus_settings": [(("owner_id",), None)],
     "referrers": [(("owner_id", "user_id"), None)],
     # mirrors uq_whatsapp_sends_one_active (partial: only sending/sent rows)
-    "whatsapp_sends": [(("bonus_result_id",), lambda r: r.get("status") in ("sending", "sent"))],
+    "whatsapp_sends": [(("bonus_result_id",), lambda r: r.get("status") in ("sending", "queued", "sent"))],
 }
 
 DEFAULTS: Dict[str, Dict[str, Any]] = {
@@ -61,7 +61,7 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
     "referrers": {"display_name": None, "notes": None, "default_rate": None, "is_active": True},
     "calculation_history": {},
     "whatsapp_initiations": {},
-    "whatsapp_sends": {"provider_message_id": None, "error_message": None, "batch_id": None},
+    "whatsapp_sends": {"provider_message_id": None, "provider_status": None, "error_message": None, "batch_id": None},
     "whatsapp_batches": {"skipped": [], "finished_at": None},
     "whatsapp_test_sends": {"provider_message_id": None, "error_message": None},
     "bonus_settings": {},

@@ -34,6 +34,7 @@ class BulkProgress {
   final String status; // 'running' | 'completed' | 'interrupted'
   final int totalSelected;
   final int queued;
+  final int providerQueued;
   final int sent;
   final int failed;
   final int unknown;
@@ -46,6 +47,7 @@ class BulkProgress {
     required this.status,
     required this.totalSelected,
     required this.queued,
+    required this.providerQueued,
     required this.sent,
     required this.failed,
     required this.unknown,
@@ -55,7 +57,7 @@ class BulkProgress {
   });
 
   bool get isRunning => status == 'running';
-  int get done => sent + failed + unknown;
+  int get done => providerQueued + sent + failed + unknown;
 
   factory BulkProgress.fromJson(Map<String, dynamic> j) {
     int n(String k) => (j[k] as num?)?.toInt() ?? 0;
@@ -64,6 +66,7 @@ class BulkProgress {
       status: j['status'] as String? ?? 'running',
       totalSelected: n('total_selected'),
       queued: n('queued'),
+      providerQueued: n('provider_queued'),
       sent: n('sent'),
       failed: n('failed'),
       unknown: n('unknown'),

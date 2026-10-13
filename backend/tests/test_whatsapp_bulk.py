@@ -9,7 +9,7 @@ from tests.conftest import ADMIN_A
 
 @pytest.fixture()
 def provider(monkeypatch):
-    state = {"calls": [], "behaviour": lambda n, m: SendOutcome(provider_message_id="pm")}
+    state = {"calls": [], "behaviour": lambda n, m: SendOutcome(provider_message_id="pm", status="sent")}
     sleeps = []
 
     def send_text(number, message):
@@ -109,14 +109,14 @@ def test_bulk_records_failures_and_continues(a, week, provider):
     def behaviour(n, m):
         if m == "hi Amy":
             raise ProviderSendError("bad number")
-        return SendOutcome("pm")
+        return SendOutcome("pm", status="sent")
 
     provider["behaviour"] = behaviour
     p = final(a, rid, bulk(a, rid, items(res, "Amy", "Bo")))
     assert p["sent"] == 1 and p["failed"] == 1
     assert p["items"] == [{"bonus_result_id": res["Amy"]["bonus_result_id"], "user_name": "Amy", "send_status": "failed", "send_error": "bad number"}]
     # Failed ones can be retried explicitly; the sent one is skipped, never re-sent.
-    provider["behaviour"] = lambda n, m: SendOutcome("pm2")
+    provider["behaviour"] = lambda n, m: SendOutcome("pm2", status="sent")
     provider["calls"].clear()
     p2 = final(a, rid, bulk(a, rid, items(res, "Amy", "Bo")))
     assert [c[1] for c in provider["calls"]] == ["hi Amy"]
@@ -174,8 +174,19 @@ def test_bulk_skips_users_whose_last_outcome_is_unknown(a, week, provider):
 
     provider["behaviour"] = odd
     a.post(f"/reports/{rid}/results/{res['Amy']['bonus_result_id']}/whatsapp-send", json={"message": "x"})
-    provider["behaviour"] = lambda n, m: SendOutcome("pm")
+    provider["behaviour"] = lambda n, m: SendOutcome("pm", status="sent")
     provider["calls"].clear()
     p = final(a, rid, bulk(a, rid, items(res, "Amy", "Bo")))
     assert [c[1] for c in provider["calls"]] == ["hi Bo"]
     assert any("unknown" in s["reason"].lower() for s in p["skipped"])
+
+
+def test_bulk_counts_provider_queued_separately_and_never_re_queues(a, week, provider):
+    rid, res = week
+    pass_test_gate(a)
+    provider["behaviour"] = lambda n, m: SendOutcome("q", status="queued", provider_status="queued")
+    p = final(a, rid, bulk(a, rid, items(res, "Amy", "Bo")))
+    assert p["provider_queued"] == 2 and p["sent"] == 0 and p["pending"] == 0
+    provider["calls"].clear()
+    p2 = final(a, rid, bulk(a, rid, items(res, "Amy")))
+    assert provider["calls"] == [] and [s["reason"] for s in p2["skipped"]] == ["Already queued with No1API."]

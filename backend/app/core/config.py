@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # See app/services/no1api_client.py.
     NO1API_BASE_URL: str = ""  # "API URL", e.g. https://crm1.no1api.com/api/meta
     NO1API_API_KEY: str = ""  # "Access Token" (shown once by the dashboard)
+    # Older variable name for the same token. If it is set it WINS over NO1API_API_KEY,
+    # so rotating the token under either name takes effect (see no1api_token below).
+    WHATSAPP_API_KEY: str = ""
     NO1API_API_VERSION: str = "v19.0"  # "API Version"
     NO1API_PHONE_NUMBER_ID: str = ""  # "Phone Number ID" of the sending number
     # Pause between two messages of a bulk run (provider rate limiting).
@@ -60,6 +63,18 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
+
+    @property
+    def no1api_token(self) -> str:
+        """The No1API access token: WHATSAPP_API_KEY if set, else NO1API_API_KEY."""
+        return (self.WHATSAPP_API_KEY or self.NO1API_API_KEY).strip().strip("\"'")
+
+    @property
+    def no1api_token_source(self) -> str:
+        """Which variable the token came from (a variable NAME, never the value)."""
+        if self.WHATSAPP_API_KEY.strip():
+            return "WHATSAPP_API_KEY"
+        return "NO1API_API_KEY" if self.NO1API_API_KEY.strip() else ""
 
     @property
     def cors_origins_list(self) -> List[str]:
