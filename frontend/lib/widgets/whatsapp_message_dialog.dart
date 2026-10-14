@@ -117,9 +117,8 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
     super.dispose();
   }
 
-  /// Locked once this dialog got the message accepted (or it was already Sent).
-  /// A message that was merely Queued before the dialog opened can be re-sent after the admin checks.
-  bool get _locked => _busy || _result.isSent || (_result.isQueued && _attempted);
+  /// Only locked while a request is in flight; earlier messages never block a new one.
+  bool get _locked => _busy;
 
   Future<void> _confirmAndSend() async {
     if (_busy) return; // never two requests from one dialog
@@ -147,7 +146,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
             bonusResultId: _result.bonusResultId,
             message: text,
             acknowledgeUnknown:
-                (_knownStatus == 'unknown' || _knownStatus == 'queued') && _checkedUnknown,
+                _knownStatus == 'unknown' && _checkedUnknown,
           );
       if (!mounted) return;
       _knownStatus = sent.status;
@@ -204,9 +203,11 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final sent = _result.isSent || (_result.isQueued && _attempted);
-    final retry = _result.canRetrySend || _attempted && !sent;
-    final needsCheck = (_knownStatus == 'unknown' || _knownStatus == 'queued') && !sent && !_busy;
+    final pending = _busy || _result.isPendingDelivery;
+    final label = _result.isSent || _result.isQueued
+        ? 'Resend'
+        : (_result.canRetrySend || _attempted ? 'Retry send' : 'Confirm & Send');
+    final needsCheck = _knownStatus == 'unknown' && !_busy;
     return PopScope(
       canPop: false,
       child: AlertDialog(
@@ -234,10 +235,8 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
               if (needsCheck) ...[
                 const SizedBox(height: AppSpacing.sm),
                 Text(
-                  _knownStatus == 'queued'
-                      ? 'This message is queued with No1API and may still arrive. Check WhatsApp first.'
-                      : 'A previous attempt for this user is Unknown: the message may already have been '
-                          'delivered. Check WhatsApp first.',
+                  'A previous attempt for this user is Unknown: the message may already have been '
+                  'delivered. Check WhatsApp first.',
                   style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w600),
                 ),
                 CheckboxListTile(
@@ -278,20 +277,29 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
                 ),
               ),
               const SizedBox(height: AppSpacing.xs),
-              if (sent)
-                Text(
-                    _result.isQueued
-                        ? 'Queued with No1API. It has not been confirmed as sent or delivered yet.'
-                        : 'Sent. The provider confirmed this message.',
-                    style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700))
-              else if (_busy)
-                const Text('Sending…', style: TextStyle(fontWeight: FontWeight.w700))
+              if (pending && !(_result.isSending && !_busy))
+                Row(children: const [
+                  SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: Text('Sending WhatsApp message...',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                ])
+              else if (_result.isSent)
+                const Text('Success: delivery confirmed by the provider.',
+                    style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700))
+              else if (_result.isSendFailed)
+                Text('Failed: ${_result.sendError ?? 'the provider reported a failure.'}',
+                    style: const TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w700))
+              else if (_result.isSendUnknown)
+                const SizedBox.shrink()
               else
                 Text(
                   'Nothing is sent until you press Confirm & Send.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
                 ),
-              if (_error != null) ...[
+              if (_error != null && !(_result.isSendFailed && _error == _result.sendError)) ...[
                 const SizedBox(height: AppSpacing.sm),
                 Text(_error!, style: const TextStyle(color: AppTheme.danger)),
               ],
@@ -301,10 +309,9 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
         actions: [
           TextButton(
             onPressed: _busy ? null : _close,
-            child: Text(sent || _attempted ? 'Close' : 'Cancel'),
+            child: Text(_attempted ? 'Close' : 'Cancel'),
           ),
-          if (!sent)
-            ElevatedButton.icon(
+          ElevatedButton.icon(
               onPressed: (_busy || needsCheck && !_checkedUnknown) ? null : _confirmAndSend,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.success,
@@ -318,7 +325,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                     )
                   : const Icon(Icons.send_outlined, size: 18),
-              label: Text(retry ? 'Retry send' : 'Confirm & Send'),
+              label: Text(label),
             ),
         ],
       ),

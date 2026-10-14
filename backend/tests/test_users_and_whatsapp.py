@@ -146,11 +146,23 @@ def test_send_goes_to_the_saved_number_and_is_recorded_as_sent(a, provider, fake
     assert len(log) == 1 and log[0]["status"] == "sent" and log[0]["provider_message_id"] == "pm-1"
 
 
-def test_a_sent_message_cannot_be_sent_twice(a, provider):
+def test_the_same_number_can_receive_several_different_messages(a, provider, fake_db):
     rid, row = numbered(a)
-    assert send(a, rid, row).status_code == 200
-    assert send(a, rid, row).status_code == 409
-    assert len(provider["calls"]) == 1
+    for text in ("first", "second", "third"):
+        r = send(a, rid, row, message=text)
+        assert r.status_code == 200, r.text
+    assert [c[1] for c in provider["calls"]] == ["first", "second", "third"]
+    assert {c[0] for c in provider["calls"]} == {"919876543210"}
+    assert [x["message_body"] for x in fake_db.tables["whatsapp_sends"]] == ["first", "second", "third"]
+
+
+def test_repeated_sends_while_pending_are_allowed_and_never_automatic(a, provider, fake_db):
+    rid, row = numbered(a)
+    provider["behaviour"] = lambda n, m: SendOutcome("q-1", status="queued", provider_status="queued")
+    assert send(a, rid, row, message="one").json()["send_status"] == "queued"
+    assert send(a, rid, row, message="two").json()["send_status"] == "queued"
+    assert len(provider["calls"]) == 2  # exactly one provider call per manual send, no retries
+    assert [x["status"] for x in fake_db.tables["whatsapp_sends"]] == ["queued", "queued"]
 
 
 def test_failure_is_recorded_and_can_be_retried_once(a, provider, fake_db):
@@ -169,7 +181,7 @@ def test_failure_is_recorded_and_can_be_retried_once(a, provider, fake_db):
     assert r2.status_code == 200, r2.text
     assert r2.json()["send_status"] == "sent"
     assert [x["status"] for x in fake_db.tables["whatsapp_sends"]] == ["failed", "sent"]  # history kept
-    assert send(a, rid, row).status_code == 409
+    assert send(a, rid, row).status_code == 200  # an earlier message never blocks a new one
 
 
 def test_unexpected_provider_error_is_unknown_without_leaking_details(a, provider):
@@ -301,7 +313,7 @@ def test_the_providers_answer_is_saved_for_an_unknown_outcome(a, provider, fake_
     assert "HTTP 200" in a.results(rid)["Rahul"]["send_error"]
 
 
-def test_a_queued_message_is_saved_as_queued_blocks_resending_and_is_not_called_sent(a, provider, fake_db):
+def test_a_queued_message_is_saved_as_queued_pending_and_is_not_called_sent(a, provider, fake_db):
     rid, row = numbered(a)
     provider["behaviour"] = lambda n, m: SendOutcome("q-1", status="queued", provider_status="queued")
     body = send(a, rid, row).json()
@@ -310,8 +322,6 @@ def test_a_queued_message_is_saved_as_queued_blocks_resending_and_is_not_called_
     assert log["status"] == "queued" and log["provider_message_id"] == "q-1" and log["provider_status"] == "queued"
     shown = a.results(rid)["Rahul"]
     assert shown["send_status"] == "queued" and shown["sent_at"] is None
-    # No silent duplicate while queued.
-    assert send(a, rid, row).status_code == 409 and len(provider["calls"]) == 1
 
 
 def test_test_status_reports_the_credential_source_name_only(a):
@@ -349,13 +359,17 @@ def test_a_10_digit_saved_number_is_sent_with_the_country_code_and_not_rewritten
     assert a.get(f"/users/{row['user_id']}").json()["whatsapp_number"] == "7354182970"
 
 
-def test_a_queued_message_that_never_arrived_can_be_resent_only_after_acknowledgement(a, provider, fake_db):
+def test_timeout_is_unknown_and_resend_needs_acknowledgement_but_is_never_automatic(a, provider, fake_db):
     rid, row = numbered(a)
-    provider["behaviour"] = lambda n, m: SendOutcome("q-1", status="queued", provider_status="queued")
-    send(a, rid, row)
-    assert send(a, rid, row).status_code == 409                       # no silent duplicate
+
+    def timeout(n, m):
+        raise ProviderOutcomeUnknown("No answer from No1API (ReadTimeout); the message may or may not have been sent.")
+    provider["behaviour"] = timeout
+    assert send(a, rid, row).json()["send_status"] == "unknown"
+    assert len(provider["calls"]) == 1  # no automatic retry
+    assert send(a, rid, row).status_code == 409 and len(provider["calls"]) == 1
+    provider["behaviour"] = lambda n, m: SendOutcome("q-2", status="queued", provider_status="queued")
     ok = a.post(f"/reports/{rid}/results/{row['bonus_result_id']}/whatsapp-send",
                 json={"message": "again", "acknowledge_unknown": True})
     assert ok.status_code == 200 and ok.json()["send_status"] == "queued"
-    assert [x["status"] for x in fake_db.tables["whatsapp_sends"]] == ["failed", "queued"]  # history kept
-    assert len(provider["calls"]) == 2
+    assert [x["status"] for x in fake_db.tables["whatsapp_sends"]] == ["unknown", "queued"]  # history kept

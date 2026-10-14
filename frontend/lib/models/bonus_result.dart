@@ -95,7 +95,11 @@ class BonusResult {
   bool get isSending => sendStatus == 'sending';
   bool get isQueued => sendStatus == 'queued';
 
-  /// The provider has the message (queued or sent): it must never be sent again.
+  /// The provider has accepted the message but has not confirmed delivery.
+  bool get isPendingDelivery => isSending || isQueued;
+
+  /// The provider has the message (queued or sent). Bulk runs skip these; a
+  /// deliberate single Resend is still allowed.
   bool get isAccepted => isQueued || isSent;
   bool get isSendFailed => sendStatus == 'failed';
   bool get isSendUnknown => sendStatus == 'unknown';

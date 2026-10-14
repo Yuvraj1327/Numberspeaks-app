@@ -68,7 +68,7 @@ def test_request_shape_and_success(monkeypatch):
     assert headers == {"Authorization": "Bearer secret-token"}
     assert body["to"] == "919876543210" and body["type"] == "text" and body["text"]["body"] == "hello"
     assert body["messaging_product"] == "whatsapp"
-    assert out.provider_message_id == "wamid.1" and out.status == "sent"
+    assert out.provider_message_id == "wamid.1" and out.status == "queued"  # an id is not delivery
 
 
 def test_rejection_is_failed_and_never_leaks_token(monkeypatch):

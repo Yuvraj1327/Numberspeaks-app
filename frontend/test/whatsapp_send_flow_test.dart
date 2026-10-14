@@ -26,6 +26,11 @@ class _Backend implements HttpClientAdapter {
   bool testPassed = false;
   int bulkPolls = 0;
 
+  /// What the mocked provider reports for a single send.
+  String sendStatus = 'sent';
+  String? sendError;
+  bool sendTimesOut = false;
+
   @override
   Future<ResponseBody> fetch(RequestOptions o, Stream<Uint8List>? s, Future<void>? c) async {
     final path = o.uri.path;
@@ -50,11 +55,15 @@ class _Backend implements HttpClientAdapter {
       bulkPolls++;
       body = _progress('completed', sent: 1, failed: 1);
     } else if (o.method == 'POST' && path.endsWith('/whatsapp-send')) {
+      if (sendTimesOut) {
+        throw DioException(requestOptions: o, type: DioExceptionType.receiveTimeout);
+      }
       status = 200;
       body = {
         'bonus_result_id': 'b1',
-        'send_status': 'sent',
-        'sent_at': '2026-10-12T10:00:00+00:00'
+        'send_status': sendStatus,
+        'send_error': sendError,
+        'sent_at': sendStatus == 'sent' ? '2026-10-12T10:00:00+00:00' : null,
       };
     } else if (RegExp(r'/reports/[^/]+$').hasMatch(path)) {
       status = 200;
@@ -170,9 +179,73 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.calls.where((c) => c == 'POST /api/v1/reports/r1/results/1/whatsapp-send'),
         hasLength(1));
-    expect(find.textContaining('Sent.'), findsOneWidget);
-    // The button is gone once sent: no second send is possible from here.
-    expect(find.text('Confirm & Send'), findsNothing);
+    expect(find.textContaining('Success'), findsOneWidget);
+    // Resend stays available: each intentional send is a separate message.
+    expect(find.text('Resend'), findsOneWidget);
+  });
+
+  Future<void> openDialog(WidgetTester tester, {BonusResult? result}) async {
+    bigSurface(tester);
+    await tester.pumpWidget(host((c) => ElevatedButton(
+          onPressed: () =>
+              showWhatsAppMessageDialog(c, result: result ?? _result('1', 'Amy')),
+          child: const Text('open'),
+        )));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+  }
+
+  int sendCalls() => backend.calls.where((c) => c.endsWith('/whatsapp-send')).length;
+
+  testWidgets('queued is pending: loading text, never Success, and Resend stays available',
+      (tester) async {
+    backend.sendStatus = 'queued';
+    await openDialog(tester);
+    await tester.tap(find.text('Confirm & Send'));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100)); // the spinner never settles
+    }
+    expect(find.text('Sending WhatsApp message...'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(find.textContaining('Success'), findsNothing);
+    expect(find.textContaining('Queued with No1API'), findsNothing);
+    expect(find.text('Resend'), findsOneWidget);
+    expect(sendCalls(), 1); // no automatic retry
+  });
+
+  testWidgets('failed shows the reason in red', (tester) async {
+    backend.sendStatus = 'failed';
+    backend.sendError = 'This number could not receive the message.';
+    await openDialog(tester);
+    await tester.tap(find.text('Confirm & Send'));
+    await tester.pumpAndSettle();
+    final failed = tester.widget<Text>(find.textContaining('Failed: This number could not'));
+    expect(failed.style?.color, AppTheme.danger);
+    expect(find.textContaining('Success'), findsNothing);
+  });
+
+  testWidgets('a timeout is not Success or Failed, and is not retried automatically',
+      (tester) async {
+    backend.sendTimesOut = true;
+    await openDialog(tester);
+    await tester.tap(find.text('Confirm & Send'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('may or may not have been'), findsOneWidget);
+    expect(find.textContaining('Success'), findsNothing);
+    expect(find.textContaining('Failed:'), findsNothing);
+    expect(sendCalls(), 1);
+    expect(find.text('Retry send'), findsOneWidget); // manual retry still offered
+  });
+
+  testWidgets('the same number can be sent several different messages', (tester) async {
+    await openDialog(tester);
+    await tester.enterText(find.byType(TextField), 'first message');
+    await tester.tap(find.text('Confirm & Send'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'second message');
+    await tester.tap(find.text('Resend'));
+    await tester.pumpAndSettle();
+    expect(sendCalls(), 2);
   });
 
   testWidgets('bulk: locked until test passed and messages reviewed; then shows progress + summary',
@@ -261,11 +334,12 @@ void main() {
     expect(r.isSent, isFalse);
   });
 
-  test('Queued is its own status: accepted (never resent) but not "sent"', () {
+  test('Queued is its own status: accepted but not "sent", and it can be resent', () {
     final r = BonusResult.fromJson({..._rawResult('1', 'Amy'), 'send_status': 'queued'});
     expect(r.isQueued, isTrue);
     expect(r.isSent, isFalse);
     expect(r.isAccepted, isTrue);
     expect(r.canRetrySend, isFalse);
+    expect(r.isPendingDelivery, isTrue);
   });
 }

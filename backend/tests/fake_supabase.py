@@ -42,8 +42,8 @@ UNIQUES: Dict[str, List[Any]] = {
     "referral_entries": [(("owner_id", "report_id", "referred_user_id"), None)],
     "bonus_settings": [(("owner_id",), None)],
     "referrers": [(("owner_id", "user_id"), None)],
-    # mirrors uq_whatsapp_sends_one_active (partial: only sending/sent rows)
-    "whatsapp_sends": [(("bonus_result_id",), lambda r: r.get("status") in ("sending", "queued", "sent"))],
+    # mirrors uq_whatsapp_sends_one_active (partial: only the in-flight 'sending' row)
+    "whatsapp_sends": [(("bonus_result_id",), lambda r: r.get("status") == "sending")],
 }
 
 DEFAULTS: Dict[str, Dict[str, Any]] = {

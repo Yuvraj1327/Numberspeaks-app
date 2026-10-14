@@ -11,7 +11,7 @@ class WhatsAppSendRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000, description="The (possibly edited) text to send.")
     acknowledge_unknown: bool = Field(
         False,
-        description="Required to re-send a message whose last attempt ended 'unknown' or is still 'queued' "
+        description="Required to re-send a message whose last attempt ended 'unknown' "
         "(it may already be delivered): the admin confirms they checked.",
     )
 
@@ -20,8 +20,8 @@ class WhatsAppSendResponse(BaseModel):
     bonus_result_id: str
     send_status: str = Field(
         ...,
-        description="'pending', 'sending', 'queued' (accepted into No1API's queue; not yet confirmed "
-        "sent/delivered), 'sent', 'failed' or 'unknown'.",
+        description="'pending', 'sending', 'queued' (accepted by the provider; delivery NOT confirmed), "
+        "'sent' (provider-confirmed), 'failed' or 'unknown'.",
     )
     send_error: Optional[str] = None
     sent_at: Optional[str] = None

@@ -18,8 +18,9 @@ that contract:
 The request is inferred from the dashboard fields and Meta's published format;
 the 200 answer above is what No1API really returned. No No1API documentation is
 available to this project, so there is NO delivery-status endpoint or webhook
-here: a queued message stays 'queued' and is never shown as sent or delivered
-until a documented source for that exists.
+here: an accepted message stays 'queued' (pending) and is never shown as sent or
+delivered until a documented source for that exists. HTTP 200 only ever means
+"accepted"; it is not delivery.
 
 Important WhatsApp rule: a free-text message is only deliverable when the user
 wrote to this number in the last 24 hours. Otherwise the provider rejects it
@@ -27,8 +28,8 @@ wrote to this number in the last 24 hours. Otherwise the provider rejects it
 
 Contract for `send_text`:
   * return SendOutcome only when the provider accepted the message: status
-    'queued' (accepted into No1API's queue; neither sent nor delivered). No
-    delivery receipts are used, so 'delivered' is never produced;
+    'queued' (accepted by the provider; neither sent nor delivered). No
+    delivery receipts are used, so 'sent'/'delivered' are never produced;
   * raise ProviderSendError(safe_message) for a rejection or when the request
     provably never left (connection refused);
   * raise ProviderOutcomeUnknown when it may have been processed but no answer
@@ -119,7 +120,7 @@ def _parse_accepted(data, response: "httpx.Response") -> SendOutcome:
         {"messaging_channel": "whatsapp", "message": {"queue_id": "...", "message_status": "queued"}}
     'queued' is the only provider status handled: it is stored as our 'queued'
     (accepted into No1API's queue; NOT sent, NOT delivered). The Meta-style
-    {"messages": [{"id": ...}]} answer is also accepted. Anything else is
+    {"messages": [{"id": ...}]} answer is also accepted (as 'queued': an id is not delivery). Anything else is
     'unknown' (with the answer recorded), never assumed to be a success."""
     if isinstance(data, dict):
         message = data.get("message")
@@ -132,7 +133,7 @@ def _parse_accepted(data, response: "httpx.Response") -> SendOutcome:
             raise ProviderOutcomeUnknown(_describe(response) + f" (unhandled message_status {provider_status!r})")
         messages = data.get("messages")
         if isinstance(messages, list) and messages and isinstance(messages[0], dict) and messages[0].get("id"):
-            return SendOutcome(provider_message_id=str(messages[0]["id"]), status="sent", provider_status="accepted")
+            return SendOutcome(provider_message_id=str(messages[0]["id"]), status="queued", provider_status="accepted")
     raise ProviderOutcomeUnknown(_describe(response) + " (no queue id or message id found)")
 
 

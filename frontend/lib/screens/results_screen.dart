@@ -982,11 +982,9 @@ class _ResultsBodyState extends State<_ResultsBody> {
     }
     // 'sending' that survives a reload means a send never finished: it may be
     // retried (the server still refuses a duplicate while one is truly in flight).
-    final canSend = r.hasWhatsAppNumber && !r.isSent;
-    final label = r.isSent
-        ? 'Sent'
-        : r.isQueued
-            ? 'Resend'
+    final canSend = r.hasWhatsAppNumber;
+    final label = r.isSent || r.isQueued
+        ? 'Resend'
         : r.canRetrySend
             ? 'Retry send'
             : 'Auto Send WhatsApp';

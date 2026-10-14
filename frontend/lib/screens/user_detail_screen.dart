@@ -604,7 +604,7 @@ class _WhatsAppCard extends StatelessWidget {
       case 'sending':
         return 'Sending (not finished)';
       case 'queued':
-        return 'Queued with No1API (not yet confirmed sent or delivered)';
+        return 'Sending WhatsApp message… (delivery not confirmed yet)';
       case 'failed':
         return 'Failed${r.sendError == null ? '' : ': ${r.sendError}'}';
       case 'unknown':
@@ -617,7 +617,7 @@ class _WhatsAppCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = result;
-    final canSend = r != null && r.hasPayableBonus && number != null && !r.isSent;
+    final canSend = r != null && r.hasPayableBonus && number != null;
 
     String? reason;
     if (r != null && !r.hasPayableBonus) {
@@ -672,7 +672,7 @@ class _WhatsAppCard extends StatelessWidget {
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.send_outlined, size: 18),
-                label: Text(r.isSent ? 'Sent' : r.isQueued ? 'Resend' : r.canRetrySend ? 'Retry send' : 'Auto Send WhatsApp'),
+                label: Text(r.isSent || r.isQueued ? 'Resend' : r.canRetrySend ? 'Retry send' : 'Auto Send WhatsApp'),
               ),
               if (reason != null)
                 Padding(

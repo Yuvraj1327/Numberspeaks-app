@@ -6,12 +6,15 @@ Safety rules (each protects against a duplicate or a false status):
   1. Ownership + eligibility (own report, calculated, payable > 0, valid saved number).
   2. 503 if the provider isn't usable — BEFORE any record exists.
   3. Insert a 'sending' attempt first. A partial unique index in Postgres allows
-     only one 'sending'/'sent' attempt per result, so a double click, a second
-     tab, a bulk run overlapping a manual send, or a retry race gets refused and
-     never reaches the provider.
-  4. Only a provider-confirmed acceptance becomes 'sent'. A rejection is 'failed'.
-     An unanswered request is 'unknown'. A failed/unknown message is only re-sent
-     when the admin explicitly sends it again.
+     only one IN-FLIGHT ('sending') attempt per result, so a double click, a second
+     tab or a bulk run overlapping a manual send gets refused and never reaches
+     the provider. Earlier messages never block a new one: each intentional send
+     is a separate message.
+  4. Provider acceptance is only 'queued' (pending); 'sent' needs a provider
+     delivery confirmation, which No1API does not document, so it is never
+     produced here. A rejection is 'failed'. An unanswered request is 'unknown'
+     and needs the admin's acknowledgement before sending again. Nothing is
+     ever retried automatically.
   5. Bulk runs need an explicit confirmation, a prior successful test message,
      and pause between messages.
 
@@ -145,31 +148,20 @@ def _attempt(
     _expire_stale_sending(db, owner_id, bonus_result_id)
     # A re-send after an 'unknown' outcome could be a duplicate (the first message may
     # already have been delivered), so it needs the admin's explicit acknowledgement.
+    # A queued/sent message never blocks a new, intentional one.
     last = (
         db.table("bonus_results").select("whatsapp_send_status").eq("owner_id", owner_id).eq("id", bonus_result_id)
         .limit(1).execute().data
     )
     previous = last[0].get("whatsapp_send_status") if last else None
-    if previous in ("unknown", "queued") and not acknowledge_unknown:
+    if previous == "unknown" and not acknowledge_unknown:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "The previous attempt's outcome is unknown, so this message may already have been delivered. "
-                if previous == "unknown"
-                else "This message is queued with No1API and may still arrive. "
-            )
-            + "Check WhatsApp, then confirm that you want to send it again.",
+                "Check WhatsApp, then confirm that you want to send it again."
+            ),
         )
-    if previous == "queued":
-        # The admin says the queued message never arrived. Close that attempt so the
-        # one-active-attempt rule lets a new one in; the history row is kept.
-        db.table("whatsapp_sends").update(
-            {
-                "status": "failed",
-                "error_message": "Queued, but the admin reported it was not received; sent again.",
-                "updated_at": _now().isoformat(),
-            }
-        ).eq("owner_id", owner_id).eq("bonus_result_id", bonus_result_id).eq("status", "queued").execute()
     try:
         inserted = (
             db.table("whatsapp_sends")
@@ -191,7 +183,7 @@ def _attempt(
         if is_unique_violation(exc):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="A message for this user is already being sent or was already sent.",
+                detail="A message for this user is already being sent. Wait for it to finish.",
             ) from exc
         raise
     attempt_id = inserted.data[0]["id"]
