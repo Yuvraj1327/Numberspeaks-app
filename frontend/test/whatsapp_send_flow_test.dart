@@ -197,16 +197,17 @@ void main() {
 
   int sendCalls() => backend.calls.where((c) => c.endsWith('/whatsapp-send')).length;
 
-  testWidgets('queued is pending: loading text, never Success, and Resend stays available',
+  testWidgets('queued: spinner only while in flight, then "Accepted" (never stuck, never Success)',
       (tester) async {
     backend.sendStatus = 'queued';
     await openDialog(tester);
     await tester.tap(find.text('Confirm & Send'));
-    for (var i = 0; i < 5; i++) {
-      await tester.pump(const Duration(milliseconds: 100)); // the spinner never settles
-    }
+    await tester.pump(); // request in flight
     expect(find.text('Sending WhatsApp message...'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    await tester.pumpAndSettle(); // would time out if a spinner never stopped
+    expect(find.text('Sending WhatsApp message...'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Accepted by No1API. Delivery is not confirmed yet.'), findsOneWidget);
     expect(find.textContaining('Success'), findsNothing);
     expect(find.textContaining('Queued with No1API'), findsNothing);
     expect(find.text('Resend'), findsOneWidget);

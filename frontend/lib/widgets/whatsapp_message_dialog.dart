@@ -203,7 +203,6 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final pending = _busy || _result.isPendingDelivery;
     final label = _result.isSent || _result.isQueued
         ? 'Resend'
         : (_result.canRetrySend || _attempted ? 'Retry send' : 'Confirm & Send');
@@ -277,7 +276,7 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
                 ),
               ),
               const SizedBox(height: AppSpacing.xs),
-              if (pending && !(_result.isSending && !_busy))
+              if (_busy)
                 Row(children: const [
                   SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
                   SizedBox(width: AppSpacing.xs),
@@ -286,6 +285,9 @@ class _WhatsAppMessageDialogState extends State<_WhatsAppMessageDialog> {
                         style: TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ])
+              else if (_result.isQueued)
+                const Text('Accepted by No1API. Delivery is not confirmed yet.',
+                    style: TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700))
               else if (_result.isSent)
                 const Text('Success: delivery confirmed by the provider.',
                     style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700))

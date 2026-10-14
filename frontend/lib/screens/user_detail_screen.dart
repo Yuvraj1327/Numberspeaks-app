@@ -604,7 +604,7 @@ class _WhatsAppCard extends StatelessWidget {
       case 'sending':
         return 'Sending (not finished)';
       case 'queued':
-        return 'Sending WhatsApp message… (delivery not confirmed yet)';
+        return 'Accepted by No1API (delivery not confirmed yet)';
       case 'failed':
         return 'Failed${r.sendError == null ? '' : ': ${r.sendError}'}';
       case 'unknown':

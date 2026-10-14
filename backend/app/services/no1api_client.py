@@ -37,6 +37,7 @@ Contract for `send_text`:
   * messages shown to the admin never contain the token or the message text.
 """
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -46,6 +47,7 @@ import httpx
 
 from app.core.config import get_settings
 
+logger = logging.getLogger("numberspeaks")
 SPEC_IMPLEMENTED = True
 TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
 
@@ -137,6 +139,21 @@ def _parse_accepted(data, response: "httpx.Response") -> SendOutcome:
     raise ProviderOutcomeUnknown(_describe(response) + " (no queue id or message id found)")
 
 
+def _log_response(response: "httpx.Response", data) -> None:
+    """Diagnostics only: HTTP status, response field NAMES, provider status and queue id.
+    Never the token, headers, phone number, message text or raw body."""
+    message = data.get("message") if isinstance(data, dict) else None
+    message = message if isinstance(message, dict) else {}
+    logger.info(
+        "No1API response: http=%s fields=%s message_fields=%s message_status=%s queue_id=%s",
+        response.status_code,
+        sorted(data) if isinstance(data, dict) else type(data).__name__,
+        sorted(message),
+        message.get("message_status"),
+        message.get("queue_id"),
+    )
+
+
 def send_text(number: str, message: str) -> SendOutcome:
     if not is_available():
         raise ProviderNotConfigured("The No1API integration is not configured on the server.")
@@ -167,6 +184,7 @@ def send_text(number: str, message: str) -> SendOutcome:
     except ValueError:
         data = {}
 
+    _log_response(response, data)
     if response.status_code == 200:
         return _parse_accepted(data, response)
 

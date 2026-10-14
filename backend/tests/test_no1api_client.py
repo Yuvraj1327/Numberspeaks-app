@@ -131,3 +131,15 @@ def test_unavailable_without_settings(monkeypatch):
     assert c.is_available() is False
     with pytest.raises(c.ProviderNotConfigured):
         c.send_text("919876543210", "x")
+
+
+def test_diagnostic_log_has_status_and_queue_id_but_no_secrets(monkeypatch, caplog):
+    import logging
+
+    mock(monkeypatch, lambda: resp(200, REAL_QUEUED))
+    with caplog.at_level(logging.INFO, logger="numberspeaks"):
+        c.send_text("919876543210", "private message text")
+    text = caplog.text
+    assert "http=200" in text and "message_status=queued" in text and "queue_id=q-123" in text
+    for secret in ("secret-token", "919876543210", "private message text", "Bearer"):
+        assert secret not in text
