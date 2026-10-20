@@ -18,7 +18,9 @@ import '../widgets/grid_table.dart';
 import '../widgets/loading_view.dart';
 import '../widgets/screen_header.dart';
 import '../widgets/status_pill.dart';
+import '../widgets/user_whatsapp_button.dart' show WhatsAppMode;
 import '../widgets/whatsapp_bulk_dialog.dart';
+import '../widgets/whatsapp_manual_dialog.dart';
 import '../widgets/whatsapp_message_dialog.dart';
 import '../widgets/whatsapp_number_dialog.dart';
 
@@ -488,6 +490,21 @@ class _ResultsBodyState extends State<_ResultsBody> {
         all ? _results : _results.where((r) => _selected.contains(r.bonusResultId)));
     final reportId = _results.isEmpty ? null : _results.first.reportId;
     if (reportId == null) return;
+    final mode = await _chooseMode(targets.length);
+    if (mode == null || !mounted) return;
+    if (mode == WhatsAppMode.manual) {
+      final ctx = await loadMessageContext(context, reportId);
+      if (!mounted) return;
+      await showWhatsAppManualDialog(
+        context,
+        targets: targets,
+        template: ctx.template,
+        week: ctx.week,
+        title: all ? 'Manual: All Eligible' : 'Manual: Selected',
+      );
+      if (mounted) setState(_selected.clear);
+      return;
+    }
     await showWhatsAppBulkDialog(
       context,
       reportId: reportId,
@@ -498,6 +515,33 @@ class _ResultsBodyState extends State<_ResultsBody> {
     if (!mounted) return;
     setState(_selected.clear);
     _load(silent: true);
+  }
+
+  Future<WhatsAppMode?> _chooseMode(int count) {
+    return showDialog<WhatsAppMode>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Send to $count user${count == 1 ? '' : 's'}'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop(WhatsAppMode.auto),
+            child: const ListTile(
+              leading: Icon(Icons.bolt_outlined),
+              title: Text('Auto Send'),
+              subtitle: Text('Sent by the server, one at a time, with a status'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop(WhatsAppMode.manual),
+            child: const ListTile(
+              leading: Icon(Icons.open_in_new),
+              title: Text('Manual Send'),
+              subtitle: Text('Open each WhatsApp chat yourself, one by one'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _bulkBar() {

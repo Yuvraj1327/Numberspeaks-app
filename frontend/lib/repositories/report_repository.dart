@@ -228,6 +228,9 @@ class ReportRepository extends ChangeNotifier {
 
   Future<UserHistory> getUserHistory(String userId) => _usersApi.history(userId);
 
+  /// The user's week-by-week bonus ledger (one row per week, newest first).
+  Future<UserWeeks> getUserWeeks(String userId) => _usersApi.weeks(userId);
+
   /// Edits a user's name and/or level (only the keys given).
   Future<UserProfile> updateUser(String userId, Map<String, dynamic> changes) async {
     final user = await _usersApi.update(userId, changes);

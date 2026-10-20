@@ -8,13 +8,14 @@ scoped by `owner_id` (see app/services/reports_service.py).
 """
 
 import re
+from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional, Set
 
 from fastapi import HTTPException, status
 from supabase import Client
 
-from app.schemas.users import HistoryEntry, UserProfile
+from app.schemas.users import HistoryEntry, UserProfile, WeekEntry
 from app.services.bonus_calculator import ZERO, to_decimal
 from app.services.reports_service import fetch_all, is_valid_uuid, list_reports, report_sort_key
 
@@ -178,13 +179,16 @@ def get_history(db: Client, owner_id: str, user_id: str) -> List[HistoryEntry]:
         .range(a, b)
         .execute()
     )
-    names = {r["id"]: r.get("file_name") for r in list_reports(db, owner_id)}
+    reports = {r["id"]: r for r in list_reports(db, owner_id)}
+    names = {rid: r.get("file_name") for rid, r in reports.items()}
     return [
         HistoryEntry(
             history_id=r["id"],
             run_id=r["run_id"],
             report_id=r["report_id"],
             report_file_name=names.get(r["report_id"]),
+            period_start=(reports.get(r["report_id"]) or {}).get("period_start"),
+            period_end=(reports.get(r["report_id"]) or {}).get("period_end"),
             calculated_at=r["calculated_at"],
             profit_loss=float(r["profit_loss"]),
             personal_rate=float(r["personal_rate"]),
@@ -197,3 +201,70 @@ def get_history(db: Client, owner_id: str, user_id: str) -> List[HistoryEntry]:
         )
         for r in rows
     ]
+
+
+_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def week_label(report: dict) -> str:
+    """'5-11 Oct 2026' (or '28 Sep - 4 Oct 2026'); '' for a legacy report with no dates."""
+    try:
+        s = date.fromisoformat(str(report.get("period_start")))
+        e = date.fromisoformat(str(report.get("period_end")))
+    except ValueError:
+        return ""
+    if (s.year, s.month) == (e.year, e.month):
+        return f"{s.day}-{e.day} {_MONTHS[e.month - 1]} {e.year}"
+    if s.year == e.year:
+        return f"{s.day} {_MONTHS[s.month - 1]} - {e.day} {_MONTHS[e.month - 1]} {e.year}"
+    return f"{s.day} {_MONTHS[s.month - 1]} {s.year} - {e.day} {_MONTHS[e.month - 1]} {e.year}"
+
+
+def get_weeks(db: Client, owner_id: str, user_id: str) -> List[WeekEntry]:
+    """The user's weekly bonus ledger: ONE row per completed weekly report
+    (from bonus_results, which holds exactly one row per user per report), newest
+    week first. Unlike calculation_history this never lists a recalculation twice."""
+    reports = {r["id"]: r for r in list_reports(db, owner_id) if r.get("status") == "completed"}
+    rows = fetch_all(
+        lambda a, b: db.table("bonus_results")
+        .select(
+            "id, report_id, profit_loss, personal_adjustment, referral_adjustment, previous_balance, "
+            "final_balance, payable_bonus, carry_forward_balance, calculated_at, whatsapp_send_status"
+        )
+        .eq("owner_id", owner_id)
+        .eq("user_id", user_id)
+        .eq("calculation_status", "calculated")
+        .order("id")
+        .range(a, b)
+        .execute()
+    )
+    rows = [r for r in rows if r["report_id"] in reports]
+    rows.sort(key=lambda r: report_sort_key(reports[r["report_id"]]), reverse=True)
+    weeks: List[WeekEntry] = []
+    for i, r in enumerate(rows):
+        rep = reports[r["report_id"]]
+
+        def num(key: str) -> float:
+            return float(r.get(key) or 0)
+
+        weeks.append(
+            WeekEntry(
+                report_id=r["report_id"],
+                bonus_result_id=r["id"],
+                report_file_name=rep.get("file_name"),
+                period_start=rep.get("period_start"),
+                period_end=rep.get("period_end"),
+                week_label=week_label(rep),
+                is_current=i == 0,
+                calculated_at=r.get("calculated_at"),
+                profit_loss=num("profit_loss"),
+                personal_adjustment=num("personal_adjustment"),
+                referral_adjustment=num("referral_adjustment"),
+                previous_balance=num("previous_balance"),
+                final_balance=num("final_balance"),
+                payable_bonus=num("payable_bonus"),
+                carry_forward_balance=num("carry_forward_balance"),
+                send_status=r.get("whatsapp_send_status") or "pending",
+            )
+        )
+    return weeks

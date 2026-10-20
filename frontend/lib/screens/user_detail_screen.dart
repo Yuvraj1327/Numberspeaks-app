@@ -32,6 +32,7 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
   BonusResult? _result;
   UserProfile? _profile;
   List<HistoryEntry> _history = [];
+  List<WeekEntry> _weeks = [];
 
   bool _loading = true;
   String? _resultError;
@@ -68,10 +69,12 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
     String? historyError;
     UserProfile? profile = _profile;
     var history = _history;
+    var weeks = _weeks;
     try {
       final data = await repo.getUserHistory(widget.args.userId);
       profile = data.user;
       history = data.history;
+      weeks = (await repo.getUserWeeks(widget.args.userId)).weeks;
     } on ApiException catch (e) {
       historyError = e.userMessage;
     }
@@ -81,6 +84,7 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
       _result = result;
       _profile = profile;
       _history = history;
+      _weeks = weeks;
       _resultError = resultError;
       _historyError = historyError;
       _loading = false;
@@ -279,6 +283,8 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                     _RowDetailsCard(result: _result!, onEdit: _editRow),
                     const SizedBox(height: AppSpacing.md),
                   ],
+                  _WeeksCard(weeks: _weeks, loading: _loading && _weeks.isEmpty),
+                  const SizedBox(height: AppSpacing.md),
                   _HistoryCard(
                     profile: _profile,
                     history: _history,
@@ -690,6 +696,73 @@ class _WhatsAppCard extends StatelessWidget {
   }
 }
 
+/// The week-by-week bonus ledger: one row per week (newest first), so a
+/// recalculation never shows up twice. The first row is the current week.
+class _WeeksCard extends StatelessWidget {
+  final List<WeekEntry> weeks;
+  final bool loading;
+
+  const _WeeksCard({required this.weeks, required this.loading});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Weekly bonus', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: AppSpacing.sm),
+            if (loading)
+              const Center(child: CircularProgressIndicator())
+            else if (weeks.isEmpty)
+              Text('No calculated weeks yet.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54))
+            else
+              for (var i = 0; i < weeks.length; i++) ...[
+                _weekRow(weeks[i]),
+                if (i != weeks.length - 1) const Divider(height: AppSpacing.lg),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _weekRow(WeekEntry w) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Expanded(
+            child: Text(w.weekLabel == '—' ? 'Week (no dates)' : w.weekLabel,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+          if (w.isCurrent)
+            const Text('CURRENT',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.blue)),
+        ]),
+        const SizedBox(height: AppSpacing.xs),
+        Wrap(
+          spacing: AppSpacing.md,
+          runSpacing: AppSpacing.xs,
+          children: [
+            _MiniStat('P/L', Formatters.points(w.profitLoss)),
+            _MiniStat('Personal', Formatters.signed(w.personalAdjustment)),
+            _MiniStat('Referral', Formatters.signed(w.referralAdjustment)),
+            _MiniStat('Previous', Formatters.signed(w.previousBalance)),
+            _MiniStat('Payable', Formatters.rupees(w.payableBonus),
+                color: w.payableBonus > 0 ? AppTheme.success : null),
+            _MiniStat('Carry fwd', Formatters.signed(w.carryForwardBalance),
+                color: w.carryForwardBalance < 0 ? AppTheme.danger : null),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 class _HistoryCard extends StatelessWidget {
   final UserProfile? profile;
   final List<HistoryEntry> history;
@@ -769,7 +842,9 @@ class _HistoryRow extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                e.reportFileName?.isNotEmpty == true ? e.reportFileName! : 'Report',
+                e.periodStart != null
+                    ? Formatters.periodLabel(e.periodStart, e.periodEnd)
+                    : (e.reportFileName?.isNotEmpty == true ? e.reportFileName! : 'Report'),
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),

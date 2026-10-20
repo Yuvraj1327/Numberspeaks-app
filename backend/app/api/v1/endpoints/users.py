@@ -13,9 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
 from app.api.deps import CurrentUser, get_current_user, get_db
-from app.schemas.users import UserHistory, UserProfile, UserUpdate
+from app.schemas.users import UserHistory, UserProfile, UserUpdate, UserWeeks
 from app.services.users_service import (
     get_history,
+    get_weeks,
     get_user,
     list_users,
     previous_balances,
@@ -73,3 +74,14 @@ def get_user_history(
     user = _user_or_404(db, current_user.id, user_id)
     carry = previous_balances(db, current_user.id, needed_user_ids={user_id}).get(user_id)
     return UserHistory(user=to_profile(user, carry), history=get_history(db, current_user.id, user_id))
+
+
+@router.get("/{user_id}/weeks", response_model=UserWeeks, summary="A user's week-by-week bonus ledger (one row per week; first = current week)")
+def get_user_weeks(
+    user_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_db),
+) -> UserWeeks:
+    user = _user_or_404(db, current_user.id, user_id)
+    carry = previous_balances(db, current_user.id, needed_user_ids={user_id}).get(user_id)
+    return UserWeeks(user=to_profile(user, carry), weeks=get_weeks(db, current_user.id, user_id))

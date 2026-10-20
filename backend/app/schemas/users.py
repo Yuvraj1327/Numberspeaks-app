@@ -28,6 +28,8 @@ class HistoryEntry(BaseModel):
     run_id: str
     report_id: str
     report_file_name: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
     calculated_at: str
     profit_loss: float
     personal_rate: float
@@ -42,3 +44,30 @@ class HistoryEntry(BaseModel):
 class UserHistory(BaseModel):
     user: UserProfile
     history: List[HistoryEntry]
+
+
+class WeekEntry(BaseModel):
+    """One user's settled result for ONE weekly report (one row per week, so
+    recalculations are never counted twice). `is_current` marks the latest week."""
+
+    report_id: str
+    bonus_result_id: str
+    report_file_name: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    week_label: str
+    is_current: bool = False
+    calculated_at: Optional[str] = None
+    profit_loss: float
+    personal_adjustment: float
+    referral_adjustment: float
+    previous_balance: float
+    final_balance: float
+    payable_bonus: float
+    carry_forward_balance: float
+    send_status: str = "pending"
+
+
+class UserWeeks(BaseModel):
+    user: UserProfile
+    weeks: List[WeekEntry]

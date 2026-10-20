@@ -13,6 +13,7 @@ import '../routing/app_routes.dart';
 import '../widgets/empty_view.dart';
 import '../widgets/error_view.dart';
 import '../widgets/loading_view.dart';
+import '../widgets/user_whatsapp_button.dart';
 import '../widgets/whatsapp_number_dialog.dart';
 
 /// All of this admin's casino users (the bonus recipients from the weekly
@@ -187,6 +188,8 @@ class _UsersScreenState extends State<UsersScreen> {
                                       .bodySmall
                                       ?.copyWith(color: AppTheme.danger, fontWeight: FontWeight.w600),
                                 ),
+                              const SizedBox(height: AppSpacing.sm),
+                              UserWhatsAppButton(user: user, onChanged: () => _load(silent: true)),
                             ],
                           ),
                         ),

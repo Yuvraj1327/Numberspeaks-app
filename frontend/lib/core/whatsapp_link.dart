@@ -10,7 +10,7 @@ class WhatsAppLink {
   /// The default message. `{User ID}` and `{Bonus Amount}` are replaced; the
   /// admin can edit the whole text before confirming the send.
   static const String defaultTemplate =
-      "Hi {User ID}, you've got ₹{Bonus Amount} bonus. Please enjoy your game!";
+      "Hi {User ID}, you've got ₹{Bonus Amount} bonus for {Week}. Please enjoy your game!";
 
   /// The number as digits only, country code first.
   static String digitsOnly(String number) => number.replaceAll(RegExp(r'[^0-9]'), '');
@@ -41,10 +41,21 @@ class WhatsAppLink {
   /// only builds a message for a user whose payable bonus is above zero.
   static String formatBonusAmount(double payableBonus) => payableBonus.toStringAsFixed(2);
 
-  static String defaultMessage({required String userId, required double payableBonus}) {
-    return defaultTemplate
-        .replaceAll('{User ID}', userId)
-        .replaceAll('{Bonus Amount}', formatBonusAmount(payableBonus));
+  static String defaultMessage({
+    required String userId,
+    required double payableBonus,
+    String week = '',
+  }) {
+    return render(defaultTemplate, userId: userId, name: userId, payableBonus: payableBonus, week: week);
+  }
+
+  /// The click-to-chat link for MANUAL sending: `https://wa.me/<digits>?text=<encoded>`.
+  /// Opening it only starts a chat in the admin's WhatsApp; nothing is delivered
+  /// until the admin presses send there, and the app can never know whether they did.
+  static Uri waMeUri(String number, String message, {String countryCode = defaultCountryCode}) {
+    // Built by hand so spaces are %20 (Uri's query encoder would use '+').
+    return Uri.parse(
+        'https://wa.me/${international(number, countryCode: countryCode)}?text=${Uri.encodeComponent(message)}');
   }
 
   /// Every placeholder a template may use, with what it stands for.
@@ -79,7 +90,14 @@ class WhatsAppLink {
       '{Carried Balance}': carriedBalance.toStringAsFixed(2),
       '{Week}': week,
     };
+    // The week is always stated: a legacy report with no dates just drops the
+    // phrase, and a custom template that forgot {Week} gets it appended.
     var out = template;
+    if (week.isEmpty) {
+      out = out.replaceAll(' for {Week}', '').replaceAll('{Week}', '');
+    } else if (!out.contains('{Week}')) {
+      out = '$out\nWeek: {Week}';
+    }
     values.forEach((key, value) => out = out.replaceAll(key, value));
     return out;
   }

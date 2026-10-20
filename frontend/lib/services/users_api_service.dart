@@ -44,4 +44,10 @@ class UsersApiService {
     final json = await _client.get('/users/$userId/history');
     return UserHistory.fromJson(json);
   }
+
+  /// GET /api/v1/users/{user_id}/weeks
+  Future<UserWeeks> weeks(String userId) async {
+    final json = await _client.get('/users/$userId/weeks');
+    return UserWeeks.fromJson(json);
+  }
 }
