@@ -11,7 +11,7 @@ def uid_of(a, rid, name="Amy"):
 
 def test_weeks_listed_newest_first_with_dates_and_breakdown(a):
     r1 = week(a, [("Amy", 10000)], W1)      # win 10,000 -> -300 carried
-    r2 = week(a, [("Amy", -10000)], W2)     # +300, previous -300 -> final 0
+    r2 = week(a, [("Amy", 0)], W2)     # +300, previous -300 -> final 0
     r3 = week(a, [("Amy", -2000)], W3)      # +60 payable
     uid = uid_of(a, r1)
     data = a.get(f"/users/{uid}/weeks").json()

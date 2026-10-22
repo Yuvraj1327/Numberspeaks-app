@@ -26,6 +26,15 @@ class BonusResult {
   final String calculationStatus;
 
   // --- Calculation breakdown (null until calculated) -------------------
+
+  /// Reports are cumulative. `weeklyChange` = `currentReportTotal` -
+  /// `previousReportTotal` is this week's actual win (+) / loss (-), and
+  /// `bonusBasis` is the amount the bonus % was applied to. All null for a
+  /// week calculated before weekly differences existed.
+  final double? previousReportTotal;
+  final double? currentReportTotal;
+  final double? weeklyChange;
+  final double? bonusBasis;
   final double? personalRateUsed;
   final double? personalAdjustment;
   final double? referralAdjustment;
@@ -75,6 +84,10 @@ class BonusResult {
     required this.sendError,
     required this.sentAt,
     required this.createdAt,
+    this.previousReportTotal,
+    this.currentReportTotal,
+    this.weeklyChange,
+    this.bonusBasis,
     this.referrerUserId,
     this.referrerName,
     this.referredCount = 0,
@@ -132,6 +145,10 @@ class BonusResult {
       profitLoss: profitLoss,
       ptype: ptype,
       calculationStatus: calculationStatus,
+      previousReportTotal: previousReportTotal,
+      currentReportTotal: currentReportTotal,
+      weeklyChange: weeklyChange,
+      bonusBasis: bonusBasis,
       personalRateUsed: personalRateUsed,
       personalAdjustment: personalAdjustment,
       referralAdjustment: referralAdjustment,
@@ -164,6 +181,10 @@ class BonusResult {
       profitLoss: toDouble(json['profit_loss']),
       ptype: json['ptype'] as String?,
       calculationStatus: json['calculation_status'] as String? ?? 'pending',
+      previousReportTotal: toDoubleOrNull(json['previous_report_total']),
+      currentReportTotal: toDoubleOrNull(json['current_report_total']),
+      weeklyChange: toDoubleOrNull(json['weekly_change']),
+      bonusBasis: toDoubleOrNull(json['bonus_basis']),
       personalRateUsed: toDoubleOrNull(json['personal_rate_used']),
       personalAdjustment: toDoubleOrNull(json['personal_adjustment']),
       referralAdjustment: toDoubleOrNull(json['referral_adjustment']),

@@ -29,25 +29,26 @@ def test_negative_balance_carries_forward_and_is_offset_next_period(a):
     _, w1 = a.run_week([("Sam", 10000)], "w1.pdf")
     assert w1["Sam"]["payable_bonus"] == 0 and w1["Sam"]["carry_forward_balance"] == -300.0
 
+    # reports are CUMULATIVE: week 2 total 5,000 = a 5,000 loss this week (5,000 - 10,000)
     # week 2: a 5,000 loss -> +150, final = -300 + 150 = -150 (still nothing payable)
-    _, w2 = a.run_week([("Sam", -5000)], "w2.pdf")
+    _, w2 = a.run_week([("Sam", 5000)], "w2.pdf")
     s = w2["Sam"]
     assert (s["previous_balance"], s["personal_adjustment"], s["final_balance"]) == (-300.0, 150.0, -150.0)
     assert (s["payable_bonus"], s["carry_forward_balance"]) == (0.0, -150.0)
 
     # week 3: a 10,000 loss -> +300, final = -150 + 300 = +150 payable, carry cleared
-    _, w3 = a.run_week([("Sam", -10000)], "w3.pdf")
+    _, w3 = a.run_week([("Sam", -5000)], "w3.pdf")
     s = w3["Sam"]
     assert (s["previous_balance"], s["final_balance"], s["payable_bonus"], s["carry_forward_balance"]) == (-150.0, 150.0, 150.0, 0.0)
 
     # week 4: nothing owed from before
-    _, w4 = a.run_week([("Sam", -1000)], "w4.pdf")
+    _, w4 = a.run_week([("Sam", -6000)], "w4.pdf")
     assert w4["Sam"]["previous_balance"] == 0.0 and w4["Sam"]["payable_bonus"] == 30.0
 
 
 def test_carry_is_per_user(a):
     a.run_week([("A", 10000), ("B", -1000)], "w1.pdf")
-    _, w2 = a.run_week([("A", -1000), ("B", -1000)], "w2.pdf")
+    _, w2 = a.run_week([("A", 9000), ("B", -2000)], "w2.pdf")
     assert w2["A"]["previous_balance"] == -300.0 and w2["A"]["final_balance"] == -270.0
     assert w2["B"]["previous_balance"] == 0.0 and w2["B"]["payable_bonus"] == 30.0
 
@@ -55,7 +56,7 @@ def test_carry_is_per_user(a):
 def test_a_user_missing_from_a_week_keeps_their_balance_for_the_next_one(a):
     a.run_week([("A", 10000)], "w1.pdf")
     a.run_week([("B", -1000)], "w2.pdf")          # A absent
-    _, w3 = a.run_week([("A", -10000)], "w3.pdf")
+    _, w3 = a.run_week([("A", 0)], "w3.pdf")
     assert w3["A"]["previous_balance"] == -300.0 and w3["A"]["final_balance"] == 0.0
 
 
@@ -115,3 +116,79 @@ def test_user_total_and_latest_carry_in_profile(a):
     uid = r["Sam"]["user_id"]
     prof = a.get(f"/users/{uid}").json()
     assert prof["carry_forward_balance"] == -300.0 and prof["name"] == "Sam"
+
+
+# --- weekly difference: reports are cumulative -------------------------------------
+
+
+def test_first_report_uses_the_whole_total_as_the_week(a):
+    _, w1 = a.run_week([("Sam", -1000)], "w1.pdf")
+    s = w1["Sam"]
+    assert (s["previous_report_total"], s["current_report_total"]) == (0.0, -1000.0)
+    assert (s["weekly_change"], s["bonus_basis"], s["personal_adjustment"]) == (-1000.0, -1000.0, 30.0)
+
+
+def test_loss_grows_bonus_only_on_the_additional_loss(a):
+    a.run_week([("Sam", -90)], "w1.pdf")
+    _, w2 = a.run_week([("Sam", -100)], "w2.pdf")     # 100 now vs 90 before -> 10 more lost
+    s = w2["Sam"]
+    assert (s["previous_report_total"], s["current_report_total"], s["weekly_change"]) == (-90.0, -100.0, -10.0)
+    assert s["bonus_basis"] == -10.0 and s["personal_adjustment"] == 0.3  # 3% of 10, not of 100
+
+
+def test_win_grows_adjustment_only_on_the_additional_win(a):
+    a.run_week([("Sam", 150)], "w1.pdf")
+    _, w2 = a.run_week([("Sam", 200)], "w2.pdf")      # 50 more won
+    s = w2["Sam"]
+    assert s["weekly_change"] == 50.0 and s["personal_adjustment"] == -1.5
+
+
+def test_a_win_that_shrinks_the_cumulative_loss_counts_as_a_weekly_win(a):
+    a.run_week([("Sam", -1000)], "w1.pdf")
+    _, w2 = a.run_week([("Sam", -400)], "w2.pdf")     # cumulative loss fell: +600 this week
+    s = w2["Sam"]
+    assert s["weekly_change"] == 600.0 and s["personal_adjustment"] == -18.0
+    assert s["previous_balance"] == 0.0 and s["final_balance"] == -18.0  # week 1's 30 was payable, nothing carried
+    assert (s["payable_bonus"], s["carry_forward_balance"]) == (0.0, -18.0)
+
+
+def test_weekly_difference_drives_carry_forward_and_history_stays_per_week(a):
+    r1, w1 = a.run_week([("Sam", 1000)], "w1.pdf")     # win 1000 -> -30 carried
+    _, w2 = a.run_week([("Sam", 1000)], "w2.pdf")      # unchanged cumulative -> no change this week
+    s = w2["Sam"]
+    assert (s["weekly_change"], s["personal_adjustment"]) == (0.0, 0.0)
+    assert (s["previous_balance"], s["final_balance"], s["carry_forward_balance"]) == (-30.0, -30.0, -30.0)
+    # week 1's stored figures are untouched by week 2
+    old = a.results(r1)["Sam"]
+    assert (old["previous_report_total"], old["weekly_change"], old["personal_adjustment"]) == (0.0, 1000.0, -30.0)
+    uid = w1["Sam"]["user_id"]
+    weeks = a.get(f"/users/{uid}/weeks").json()["weeks"]
+    assert [(w["previous_report_total"], w["current_report_total"], w["weekly_change"]) for w in weeks] == [
+        (1000.0, 1000.0, 0.0),
+        (0.0, 1000.0, 1000.0),
+    ]
+
+
+def test_recalculating_does_not_reapply_the_difference(a):
+    a.run_week([("Sam", -90)], "w1.pdf")
+    rid2, w2 = a.run_week([("Sam", -100)], "w2.pdf")
+    again = by_name(a.calculate(rid2).json()["results"])["Sam"]
+    assert (again["weekly_change"], again["personal_adjustment"], again["previous_report_total"]) == (-10.0, 0.3, -90.0)
+
+
+def test_user_absent_last_week_uses_their_last_known_total(a):
+    a.run_week([("A", -1000)], "w1.pdf")
+    a.run_week([("B", -1)], "w2.pdf")                  # A absent
+    _, w3 = a.run_week([("A", -1500)], "w3.pdf")
+    assert (w3["A"]["previous_report_total"], w3["A"]["weekly_change"]) == (-1000.0, -500.0)
+
+
+def test_referral_uses_the_referred_users_weekly_difference(a):
+    rid1 = a.upload([("Boss", 0), ("R1", -4000)], "w1.pdf").json()["report_id"]
+    a.calculate(rid1)
+    rid2 = a.upload([("Boss", 0), ("R1", -10000)], "w2.pdf").json()["report_id"]
+    u = {n: r["user_id"] for n, r in a.results(rid2).items()}
+    a.post(f"/reports/{rid2}/referrals", json={"referrer_user_id": u["Boss"], "referred_user_id": u["R1"]})
+    boss = by_name(a.calculate(rid2).json()["results"])
+    assert boss["R1"]["weekly_change"] == -6000.0
+    assert boss["Boss"]["referral_adjustment"] == 600.0   # 10% of the 6,000 lost this week, not of 10,000

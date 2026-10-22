@@ -10,7 +10,7 @@ scoped by `owner_id` (see app/services/reports_service.py).
 import re
 from datetime import date
 from decimal import Decimal
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from fastapi import HTTPException, status
 from supabase import Client
@@ -108,21 +108,22 @@ def update_user(db: Client, owner_id: str, user_id: str, changes: dict) -> dict:
     return user
 
 
-def previous_balances(
+def previous_state(
     db: Client,
     owner_id: str,
     before_report: Optional[dict] = None,
     needed_user_ids: Optional[Set[str]] = None,
-) -> Dict[str, Decimal]:
+) -> Dict[str, Tuple[Decimal, Decimal]]:
     """
-    Each user's carried-forward balance from their MOST RECENT earlier
-    calculated period.
+    Each user's (carried-forward balance, cumulative report total) from their
+    MOST RECENT earlier calculated period.
 
     "Earlier" = reports (of this admin) that are completed and were uploaded
     chronologically before `before_report` (by period; all completed reports if None). A user
-    absent from the immediately previous report keeps the balance from the
+    absent from the immediately previous report keeps the values from the
     last report they appeared in. Stops walking back as soon as every user
-    in `needed_user_ids` is resolved.
+    in `needed_user_ids` is resolved. A user with no earlier report is simply
+    absent from the result.
     """
     reports = [r for r in list_reports(db, owner_id) if r.get("status") == "completed"]
     if before_report is not None:
@@ -130,13 +131,13 @@ def previous_balances(
         reports = [r for r in reports if r["id"] != before_report["id"] and report_sort_key(r) < limit]
     reports.sort(key=report_sort_key, reverse=True)
 
-    balances: Dict[str, Decimal] = {}
+    state: Dict[str, Tuple[Decimal, Decimal]] = {}
     for report in reports:
-        if needed_user_ids is not None and needed_user_ids.issubset(balances):
+        if needed_user_ids is not None and needed_user_ids.issubset(state):
             break
         rows = fetch_all(
             lambda a, b, rid=report["id"]: db.table("bonus_results")
-            .select("user_id, carry_forward_balance")
+            .select("user_id, carry_forward_balance, profit_loss")
             .eq("owner_id", owner_id)
             .eq("report_id", rid)
             .eq("calculation_status", "calculated")
@@ -146,13 +147,33 @@ def previous_balances(
         )
         for row in rows:
             uid = row["user_id"]
-            if uid in balances:
+            if uid in state:
                 continue
             if needed_user_ids is not None and uid not in needed_user_ids:
                 continue
             carry = row.get("carry_forward_balance")
-            balances[uid] = to_decimal(carry) if carry is not None else ZERO
-    return balances
+            total = row.get("profit_loss")
+            state[uid] = (
+                to_decimal(carry) if carry is not None else ZERO,
+                to_decimal(total) if total is not None else ZERO,
+            )
+    return state
+
+
+def previous_balances(
+    db: Client,
+    owner_id: str,
+    before_report: Optional[dict] = None,
+    needed_user_ids: Optional[Set[str]] = None,
+) -> Dict[str, Decimal]:
+    """Each user's carried-forward balance from their most recent earlier
+    calculated period (see previous_state)."""
+    return {uid: carry for uid, (carry, _total) in previous_state(db, owner_id, before_report, needed_user_ids).items()}
+
+
+def _opt(value) -> Optional[float]:
+    """None stays None (a week calculated before weekly differences existed)."""
+    return None if value is None else float(value)
 
 
 def to_profile(user: dict, carry: Optional[Decimal] = None) -> UserProfile:
@@ -191,6 +212,8 @@ def get_history(db: Client, owner_id: str, user_id: str) -> List[HistoryEntry]:
             period_end=(reports.get(r["report_id"]) or {}).get("period_end"),
             calculated_at=r["calculated_at"],
             profit_loss=float(r["profit_loss"]),
+            previous_report_total=_opt(r.get("previous_report_total")),
+            weekly_change=_opt(r.get("weekly_change")),
             personal_rate=float(r["personal_rate"]),
             personal_adjustment=float(r["personal_adjustment"]),
             referral_adjustment=float(r["referral_adjustment"]),
@@ -228,7 +251,7 @@ def get_weeks(db: Client, owner_id: str, user_id: str) -> List[WeekEntry]:
     rows = fetch_all(
         lambda a, b: db.table("bonus_results")
         .select(
-            "id, report_id, profit_loss, personal_adjustment, referral_adjustment, previous_balance, "
+            "id, report_id, profit_loss, previous_report_total, weekly_change, bonus_basis, personal_adjustment, referral_adjustment, previous_balance, "
             "final_balance, payable_bonus, carry_forward_balance, calculated_at, whatsapp_send_status"
         )
         .eq("owner_id", owner_id)
@@ -258,6 +281,10 @@ def get_weeks(db: Client, owner_id: str, user_id: str) -> List[WeekEntry]:
                 is_current=i == 0,
                 calculated_at=r.get("calculated_at"),
                 profit_loss=num("profit_loss"),
+                current_report_total=num("profit_loss"),
+                previous_report_total=_opt(r.get("previous_report_total")),
+                weekly_change=_opt(r.get("weekly_change")),
+                bonus_basis=_opt(r.get("bonus_basis")),
                 personal_adjustment=num("personal_adjustment"),
                 referral_adjustment=num("referral_adjustment"),
                 previous_balance=num("previous_balance"),

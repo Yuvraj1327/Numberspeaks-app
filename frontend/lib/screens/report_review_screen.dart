@@ -10,6 +10,7 @@ import '../repositories/report_repository.dart';
 import '../routing/app_routes.dart';
 import '../widgets/empty_view.dart';
 import '../widgets/error_view.dart';
+import '../widgets/figures.dart';
 import '../widgets/grid_table.dart';
 import '../widgets/loading_view.dart';
 
@@ -209,7 +210,7 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
               Row(
                 children: [
                   stat('Profit / Loss', Formatters.points(r.profitLoss),
-                      color: r.profitLoss < 0 ? AppTheme.danger : null),
+                      color: Figure.signColor(r.profitLoss)),
                   stat('Level', r.level ?? '—'),
                   stat('Ptype', r.ptype ?? '—'),
                 ],
@@ -354,16 +355,10 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
                               style: const TextStyle(fontWeight: FontWeight.w700),
                             ),
                             Text(r.level ?? '—', overflow: TextOverflow.ellipsis),
-                            Text(Formatters.points(r.casinoPts)),
-                            Text(Formatters.points(r.sportPts)),
-                            Text(Formatters.points(r.thirdPartyPts)),
-                            Text(
-                              Formatters.points(r.profitLoss),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: r.profitLoss < 0 ? AppTheme.danger : null,
-                              ),
-                            ),
+                            Figure.points(r.casinoPts),
+                            Figure.points(r.sportPts),
+                            Figure.points(r.thirdPartyPts),
+                            Figure.profitLoss(r.profitLoss),
                             Text(r.ptype ?? '—', overflow: TextOverflow.ellipsis),
                             Text(
                               r.hasWhatsAppNumber ? r.whatsappNumber! : '—',

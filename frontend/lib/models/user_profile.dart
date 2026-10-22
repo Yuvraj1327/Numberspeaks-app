@@ -49,6 +49,8 @@ class HistoryEntry {
   final String? periodEnd;
   final DateTime? calculatedAt;
   final double profitLoss;
+  final double? previousReportTotal;
+  final double? weeklyChange;
   final double personalRate;
   final double personalAdjustment;
   final double referralAdjustment;
@@ -66,6 +68,8 @@ class HistoryEntry {
     this.periodEnd,
     required this.calculatedAt,
     required this.profitLoss,
+    this.previousReportTotal,
+    this.weeklyChange,
     required this.personalRate,
     required this.personalAdjustment,
     required this.referralAdjustment,
@@ -85,6 +89,8 @@ class HistoryEntry {
       periodEnd: json['period_end'] as String?,
       calculatedAt: DateTime.tryParse(json['calculated_at'] as String? ?? '')?.toLocal(),
       profitLoss: toDouble(json['profit_loss']),
+      previousReportTotal: toDoubleOrNull(json['previous_report_total']),
+      weeklyChange: toDoubleOrNull(json['weekly_change']),
       personalRate: toDouble(json['personal_rate']),
       personalAdjustment: toDouble(json['personal_adjustment']),
       referralAdjustment: toDouble(json['referral_adjustment']),
@@ -122,6 +128,8 @@ class WeekEntry {
   final String? periodEnd;
   final bool isCurrent;
   final double profitLoss;
+  final double? previousReportTotal;
+  final double? weeklyChange;
   final double personalAdjustment;
   final double referralAdjustment;
   final double previousBalance;
@@ -137,6 +145,8 @@ class WeekEntry {
     required this.periodEnd,
     required this.isCurrent,
     required this.profitLoss,
+    this.previousReportTotal,
+    this.weeklyChange,
     required this.personalAdjustment,
     required this.referralAdjustment,
     required this.previousBalance,
@@ -157,6 +167,8 @@ class WeekEntry {
       periodEnd: json['period_end'] as String?,
       isCurrent: json['is_current'] as bool? ?? false,
       profitLoss: toDouble(json['profit_loss']),
+      previousReportTotal: toDoubleOrNull(json['previous_report_total']),
+      weeklyChange: toDoubleOrNull(json['weekly_change']),
       personalAdjustment: toDouble(json['personal_adjustment']),
       referralAdjustment: toDouble(json['referral_adjustment']),
       previousBalance: toDouble(json['previous_balance']),

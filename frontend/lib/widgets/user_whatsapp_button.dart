@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../core/api_exception.dart';
 import '../core/app_theme.dart';
 import '../core/whatsapp_link.dart';
+import '../models/bonus_result.dart';
 import '../models/user_profile.dart';
 import '../repositories/report_repository.dart';
 import 'whatsapp_manual_dialog.dart';
@@ -11,26 +12,27 @@ import 'whatsapp_message_dialog.dart';
 
 enum WhatsAppMode { auto, manual }
 
-/// The single "WhatsApp" button on a user card. Tapping it offers
+/// The single "WhatsApp" button used on every user card/row. Tapping it offers
 /// "Auto Send" (through the backend / No1API, with a delivery status) and
-/// "Manual Send" (opens the chat via wa.me with an editable message). Both
-/// use the user's CURRENT week: their latest calculated weekly result.
-class UserWhatsAppButton extends StatelessWidget {
-  final UserProfile user;
+/// "Manual Send" (opens the chat via wa.me with an editable message).
+class WhatsAppMenuButton extends StatelessWidget {
+  final void Function(WhatsAppMode mode) onSelected;
+  final bool enabled;
+  final bool compact;
 
-  /// Called after an Auto Send attempt so the list can refresh.
-  final VoidCallback? onChanged;
-
-  const UserWhatsAppButton({super.key, required this.user, this.onChanged});
+  const WhatsAppMenuButton({
+    super.key,
+    required this.onSelected,
+    this.enabled = true,
+    this.compact = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<WhatsAppMode>(
       tooltip: 'WhatsApp',
-      onSelected: (mode) async {
-        await startUserWhatsApp(context, user, mode);
-        onChanged?.call();
-      },
+      enabled: enabled,
+      onSelected: onSelected,
       itemBuilder: (_) => const [
         PopupMenuItem(
           value: WhatsAppMode.auto,
@@ -52,9 +54,9 @@ class UserWhatsAppButton extends StatelessWidget {
         ),
       ],
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 8),
+        padding: EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: compact ? 6 : 8),
         decoration: BoxDecoration(
-          color: AppTheme.success,
+          color: enabled ? AppTheme.success : Colors.black26,
           borderRadius: BorderRadius.circular(10),
         ),
         child: const Row(
@@ -73,6 +75,34 @@ class UserWhatsAppButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// WhatsApp button for a user whose result is not loaded yet (the Users list):
+/// it fetches the user's current-week result when a mode is chosen.
+class UserWhatsAppButton extends StatelessWidget {
+  final UserProfile user;
+
+  /// Called after a send flow so the list can refresh.
+  final VoidCallback? onChanged;
+
+  const UserWhatsAppButton({super.key, required this.user, this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return WhatsAppMenuButton(
+      onSelected: (mode) async {
+        await startUserWhatsApp(context, user, mode);
+        onChanged?.call();
+      },
+    );
+  }
+}
+
+/// Manual Send for an already-loaded result (Results table / user detail).
+Future<void> startManualSend(BuildContext context, BonusResult result) async {
+  final ctx = await loadMessageContext(context, result.reportId);
+  if (!context.mounted) return;
+  await showWhatsAppManualDialog(context, targets: [result], template: ctx.template, week: ctx.week);
 }
 
 /// Loads the user's current-week result and runs the chosen send flow.

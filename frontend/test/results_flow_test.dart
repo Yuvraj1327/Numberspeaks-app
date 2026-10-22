@@ -196,6 +196,8 @@ void main() {
     expect(rowGap('Alice'), lessThan(30));
     expect(rowGap('Bob'), greaterThan(30));
 
+    await tester.tap(find.byKey(const Key('results-options-toggle')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.sort));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Name (Z-A)'));
@@ -204,6 +206,65 @@ void main() {
     expect(rowGap('Alice'), lessThan(30));
     expect(rowGap('Bob'), greaterThan(30));
     expect(find.text('Add number'), findsOneWidget);
+  });
+
+  testWidgets('options are collapsed by default and all remain usable when expanded', (tester) async {
+    useDesktopSurface(tester);
+    backend.reports = [_report('r1', 'completed')];
+    backend.results['r1'] = [
+      _row('1', 'r1', 'Alice', -1000, 30),
+      _row('2', 'r1', 'Bob', 500, 0),
+    ];
+    await tester.pumpWidget(host(const ResultsScreen(reportId: 'r1')));
+    await tester.pumpAndSettle();
+
+    // Collapsed: search and the user rows are visible; the option controls are not.
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.byIcon(Icons.search), findsOneWidget);
+    expect(find.text('Sort'), findsNothing);
+    expect(find.text('Total payable'.toUpperCase()), findsNothing);
+    expect(find.text('Send All Eligible (2)'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('results-options-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('Sort'), findsOneWidget);
+    expect(find.text('Referral'), findsOneWidget);
+    expect(find.text('Recalculate'), findsOneWidget);
+    expect(find.text('TOTAL PAYABLE'), findsOneWidget);
+    expect(find.textContaining('Send Selected'), findsOneWidget);
+    expect(find.textContaining('Send All Eligible'), findsOneWidget);
+    expect(find.text('Loss'), findsOneWidget); // filter chip
+
+    // Collapse again.
+    await tester.tap(find.byKey(const Key('results-options-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('Sort'), findsNothing);
+  });
+
+  testWidgets('expanded options fit a small phone with no overflow and cards stay reachable',
+      (tester) async {
+    tester.view.physicalSize = const Size(320 * 2, 568 * 2);
+    tester.view.devicePixelRatio = 2;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.4;
+    addTearDown(() {
+      tester.view.reset();
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+    });
+    backend.reports = [_report('r1', 'completed')];
+    backend.results['r1'] = [
+      for (var i = 0; i < 6; i++) _row('$i', 'r1', 'User$i', -1000, 30),
+    ];
+    await tester.pumpWidget(host(const ResultsScreen(reportId: 'r1')));
+    await tester.pumpAndSettle();
+    expect(find.text('User0'), findsOneWidget); // collapsed: first card immediately visible
+
+    await tester.tap(find.byKey(const Key('results-options-toggle')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    // the panel is height-capped, so the list is still on screen below it
+    final panel = tester.getRect(find.byKey(const Key('results-options-panel')));
+    expect(panel.height, lessThanOrEqualTo(568 * 0.42 + 0.5));
+    expect(find.text('User0'), findsOneWidget);
   });
 
   testWidgets('moving a mouse over the results does not throw', (tester) async {
@@ -226,6 +287,8 @@ void main() {
     // Hover a card, then replace the list underneath the pointer.
     await mouse.moveTo(tester.getCenter(find.text('Alice')));
     await tester.pump();
+    await tester.tap(find.byKey(const Key('results-options-toggle')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.sort));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Name (Z-A)'));

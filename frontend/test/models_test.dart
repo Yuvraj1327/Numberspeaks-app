@@ -179,4 +179,18 @@ void main() {
     expect(h.history.single.previousBalance, -300);
     expect(h.history.single.payableBonus, 0);
   });
+
+  test('BonusResult parses the weekly difference; old rows leave it null', () {
+    final fresh = BonusResult.fromJson(_row(overrides: {
+      'previous_report_total': -90,
+      'current_report_total': -100,
+      'weekly_change': -10,
+      'bonus_basis': -10,
+    }));
+    expect((fresh.previousReportTotal, fresh.currentReportTotal, fresh.weeklyChange, fresh.bonusBasis),
+        (-90.0, -100.0, -10.0, -10.0));
+    final legacy = BonusResult.fromJson(_row());
+    expect(legacy.weeklyChange, isNull);
+    expect(legacy.previousReportTotal, isNull);
+  });
 }

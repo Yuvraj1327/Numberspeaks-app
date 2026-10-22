@@ -9,8 +9,11 @@ For one report it:
      never stops the rest of the report);
   2. adds up each referrer's referral adjustment from the report's referral
      entries, separately from personal bonuses;
-  3. looks up each user's carried-forward balance from their most recent
-     earlier calculated period;
+  3. looks up each user's carried-forward balance and cumulative report total
+     from their most recent earlier calculated period; the report's figures are
+     CUMULATIVE, so this week's actual win/loss = current total - previous total
+     (previous = 0 when the user has no earlier report) and every percentage is
+     applied to that difference, never to the lifetime total;
   4. settles each user:  final = previous + personal + referral
         final > 0  -> payable bonus
         final <= 0 -> payable 0, a negative final carries forward;
@@ -52,7 +55,7 @@ from app.services.reports_service import (
     update_calculation_status,
 )
 from app.services.settings_service import get_bonus_settings
-from app.services.users_service import previous_balances
+from app.services.users_service import previous_state
 from app.services.validation import validate_record
 
 logger = logging.getLogger("numberspeaks")
@@ -107,8 +110,18 @@ def run_bonus_calculation(
     settings = get_bonus_settings(db, owner_id)
     personal_rate = to_decimal(settings.personal_rate)
 
-    profit_loss_by_user: Dict[str, Decimal] = {
+    current_total_by_user: Dict[str, Decimal] = {
         row["user_id"]: to_decimal(record.profit_loss) for row, record in valid
+    }
+    previous = previous_state(
+        db,
+        owner_id,
+        before_report=report,
+        needed_user_ids=set(current_total_by_user),
+    )
+    # This week's actual win/loss: current cumulative total minus the previous one.
+    profit_loss_by_user: Dict[str, Decimal] = {
+        uid: money(total - previous.get(uid, (ZERO, ZERO))[1]) for uid, total in current_total_by_user.items()
     }
     names_by_user: Dict[str, str] = {
         row["user_id"]: (row.get("users") or {}).get("name", "") for row, _ in valid
@@ -137,13 +150,6 @@ def run_bonus_calculation(
         referral_by_referrer[referrer_id] = money(referral_by_referrer.get(referrer_id, ZERO) + adjustment)
         entry_updates.append((entry["id"], referred_pl, adjustment))
 
-    previous = previous_balances(
-        db,
-        owner_id,
-        before_report=report,
-        needed_user_ids=set(profit_loss_by_user),
-    )
-
     # --- 3. settle + save each user ----------------------------------------------
     run_id = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -157,9 +163,11 @@ def run_bonus_calculation(
     for row, record in valid:
         user_id = row["user_id"]
 
-        personal = personal_adjustment(record.profit_loss, personal_rate)
+        previous_total = previous.get(user_id, (ZERO, ZERO))[1]
+        weekly_change = profit_loss_by_user[user_id]
+        personal = personal_adjustment(weekly_change, personal_rate)
         settlement = settle_balance(
-            previous.get(user_id, ZERO),
+            previous.get(user_id, (ZERO, ZERO))[0],
             personal,
             referral_by_referrer.get(user_id, ZERO),
         )
@@ -169,6 +177,10 @@ def run_bonus_calculation(
             # now means "the final PAYABLE bonus" (never negative).
             "bonus_amount": float(settlement.payable_bonus),
             "payable_bonus": float(settlement.payable_bonus),
+            "previous_report_total": float(previous_total),
+            "current_report_total": float(current_total_by_user[user_id]),
+            "weekly_change": float(weekly_change),
+            "bonus_basis": float(weekly_change),
             "personal_rate_used": float(personal_rate),
             "personal_adjustment": float(settlement.personal_adjustment),
             "referral_adjustment": float(settlement.referral_adjustment),
@@ -218,6 +230,8 @@ def run_bonus_calculation(
                 "bonus_result_id": bonus_result_id,
                 "user_id": user_id,
                 "profit_loss": float(to_decimal(record.profit_loss)),
+                "previous_report_total": update["previous_report_total"],
+                "weekly_change": update["weekly_change"],
                 "personal_rate": float(personal_rate),
                 "personal_adjustment": float(settlement.personal_adjustment),
                 "referral_adjustment": float(settlement.referral_adjustment),

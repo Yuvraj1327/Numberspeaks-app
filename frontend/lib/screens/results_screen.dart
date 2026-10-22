@@ -1,3 +1,5 @@
+import 'dart:ui' show FontFeature;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -18,7 +20,8 @@ import '../widgets/grid_table.dart';
 import '../widgets/loading_view.dart';
 import '../widgets/screen_header.dart';
 import '../widgets/status_pill.dart';
-import '../widgets/user_whatsapp_button.dart' show WhatsAppMode;
+import '../widgets/figures.dart';
+import '../widgets/user_whatsapp_button.dart';
 import '../widgets/whatsapp_bulk_dialog.dart';
 import '../widgets/whatsapp_manual_dialog.dart';
 import '../widgets/whatsapp_message_dialog.dart';
@@ -87,7 +90,8 @@ class ResultsScreen extends StatelessWidget {
 }
 
 const _tabHeader = Padding(
-  padding: EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+  padding: EdgeInsets.fromLTRB(
+      AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
   child: ScreenHeader(eyebrow: 'Bonus calculation', title: 'Results'),
 );
 
@@ -183,7 +187,8 @@ class _ResultsTabState extends State<ResultsTab> {
             SizedBox(height: 100),
             EmptyView(
               icon: Icons.bar_chart_outlined,
-              message: 'No results yet.\nUpload and process a report to see bonus results here.',
+              message:
+                  'No results yet.\nUpload and process a report to see bonus results here.',
             ),
           ],
         ),
@@ -194,16 +199,16 @@ class _ResultsTabState extends State<ResultsTab> {
     return Column(
       children: [
         _tabHeader,
-        _ReportPicker(
-          reports: _reports,
-          selectedId: _selectedId!,
-          onSelected: (id) => setState(() => _selectedId = id),
-        ),
         Expanded(
           child: _ResultsBody(
             key: ValueKey(_selectedId),
             reportId: _selectedId!,
             refreshToken: revision,
+            reportPicker: _ReportPicker(
+              reports: _reports,
+              selectedId: _selectedId!,
+              onSelected: (id) => setState(() => _selectedId = id),
+            ),
           ),
         ),
       ],
@@ -232,7 +237,8 @@ class _ReportPicker extends StatelessWidget {
     );
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
       child: PopupMenuButton<String>(
         tooltip: 'Report history',
         onSelected: onSelected,
@@ -254,19 +260,22 @@ class _ReportPicker extends StatelessWidget {
                         ),
                         Text(
                           Formatters.dateTime(report.uploadedAt),
-                          style: const TextStyle(fontSize: 11.5, color: Colors.black54),
+                          style: const TextStyle(
+                              fontSize: 11.5, color: Colors.black54),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: AppSpacing.sm),
-                  StatusPill.forReportStatus(ReportStatus.fromString(report.status)),
+                  StatusPill.forReportStatus(
+                      ReportStatus.fromString(report.status)),
                 ],
               ),
             ),
         ],
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 10),
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: 10),
           decoration: BoxDecoration(
             color: Colors.white,
             border: Border.all(color: AppTheme.hairline),
@@ -288,12 +297,14 @@ class _ReportPicker extends StatelessWidget {
                     Text(
                       '${Formatters.dateTime(selected.uploadedAt)} • ${reports.length} report(s) in history',
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11.5, color: Colors.black54),
+                      style: const TextStyle(
+                          fontSize: 11.5, color: Colors.black54),
                     ),
                   ],
                 ),
               ),
-              StatusPill.forReportStatus(ReportStatus.fromString(selected.status)),
+              StatusPill.forReportStatus(
+                  ReportStatus.fromString(selected.status)),
               const Icon(Icons.arrow_drop_down),
             ],
           ),
@@ -310,7 +321,14 @@ class _ResultsBody extends StatefulWidget {
   /// body then reloads quietly (without a spinner).
   final int refreshToken;
 
-  const _ResultsBody({super.key, required this.reportId, this.refreshToken = 0});
+  /// The report selector (Results tab only); shown inside the options panel.
+  final Widget? reportPicker;
+
+  const _ResultsBody(
+      {super.key,
+      required this.reportId,
+      this.refreshToken = 0,
+      this.reportPicker});
 
   @override
   State<_ResultsBody> createState() => _ResultsBodyState();
@@ -319,16 +337,21 @@ class _ResultsBody extends StatefulWidget {
 class _ResultsBodyState extends State<_ResultsBody> {
   static const _columns = [
     GridColumn('User ID / Name', 210),
-    GridColumn('Profit / Loss', 110, numeric: true),
+    GridColumn('Week', 120),
+    GridColumn('Previous report total', 120, numeric: true),
+    GridColumn('Current report total', 120, numeric: true),
+    GridColumn("This week's win / loss", 140, numeric: true),
+    GridColumn('Bonus basis', 110, numeric: true),
     GridColumn('Personal bonus / adjustment', 130, numeric: true),
     GridColumn('Referral bonus / adjustment', 130, numeric: true),
     GridColumn('Previous balance', 120, numeric: true),
-    GridColumn('Final payable bonus', 140, numeric: true),
+    GridColumn('Final payable', 140, numeric: true),
     GridColumn('WhatsApp number', 190),
     GridColumn('WhatsApp send', 190),
     GridColumn('Edit', 90),
   ];
 
+  bool _optionsOpen = false;
   bool _loading = true;
   String? _errorMessage;
   List<BonusResult> _results = [];
@@ -398,10 +421,12 @@ class _ResultsBodyState extends State<_ResultsBody> {
 
     switch (_sort) {
       case _SortOption.nameAsc:
-        list.sort((a, b) => a.userName.toLowerCase().compareTo(b.userName.toLowerCase()));
+        list.sort((a, b) =>
+            a.userName.toLowerCase().compareTo(b.userName.toLowerCase()));
         break;
       case _SortOption.nameDesc:
-        list.sort((a, b) => b.userName.toLowerCase().compareTo(a.userName.toLowerCase()));
+        list.sort((a, b) =>
+            b.userName.toLowerCase().compareTo(a.userName.toLowerCase()));
         break;
       case _SortOption.payableHighLow:
         list.sort((a, b) => b.payable.compareTo(a.payable));
@@ -414,7 +439,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
   }
 
   void _replace(BonusResult updated) {
-    final index = _results.indexWhere((r) => r.bonusResultId == updated.bonusResultId);
+    final index =
+        _results.indexWhere((r) => r.bonusResultId == updated.bonusResultId);
     if (index != -1) _results[index] = updated;
   }
 
@@ -431,11 +457,14 @@ class _ResultsBodyState extends State<_ResultsBody> {
     );
     if (saved == null || !mounted) return;
     setState(() {
-      _replace(result.copyWith(whatsappNumber: saved, clearWhatsAppNumber: saved.isEmpty));
+      _replace(result.copyWith(
+          whatsappNumber: saved, clearWhatsAppNumber: saved.isEmpty));
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-          content: Text(saved.isEmpty ? 'WhatsApp number removed.' : 'WhatsApp number saved.')),
+          content: Text(saved.isEmpty
+              ? 'WhatsApp number removed.'
+              : 'WhatsApp number saved.')),
     );
   }
 
@@ -463,13 +492,15 @@ class _ResultsBodyState extends State<_ResultsBody> {
       !r.isSending &&
       !r.isSendUnknown;
 
-  List<BonusResult> get _selectedResults =>
-      _results.where((r) => _selected.contains(r.bonusResultId) && _selectable(r)).toList();
+  List<BonusResult> get _selectedResults => _results
+      .where((r) => _selected.contains(r.bonusResultId) && _selectable(r))
+      .toList();
 
   /// "All eligible" = never attempted. Failed/Unknown are never swept in
   /// automatically: they are retried only by selecting them.
-  List<BonusResult> get _allEligible =>
-      _results.where((r) => _selectable(r) && r.sendStatus == 'pending').toList();
+  List<BonusResult> get _allEligible => _results
+      .where((r) => _selectable(r) && r.sendStatus == 'pending')
+      .toList();
 
   List<BulkSkipPreview> _skippedPreview(Iterable<BonusResult> pool) {
     final out = <BulkSkipPreview>[];
@@ -486,8 +517,9 @@ class _ResultsBodyState extends State<_ResultsBody> {
 
   Future<void> _bulkSend({required bool all}) async {
     final targets = all ? _allEligible : _selectedResults;
-    final skipped = _skippedPreview(
-        all ? _results : _results.where((r) => _selected.contains(r.bonusResultId)));
+    final skipped = _skippedPreview(all
+        ? _results
+        : _results.where((r) => _selected.contains(r.bonusResultId)));
     final reportId = _results.isEmpty ? null : _results.first.reportId;
     if (reportId == null) return;
     final mode = await _chooseMode(targets.length);
@@ -528,7 +560,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
             child: const ListTile(
               leading: Icon(Icons.bolt_outlined),
               title: Text('Auto Send'),
-              subtitle: Text('Sent by the server, one at a time, with a status'),
+              subtitle:
+                  Text('Sent by the server, one at a time, with a status'),
             ),
           ),
           SimpleDialogOption(
@@ -544,29 +577,227 @@ class _ResultsBodyState extends State<_ResultsBody> {
     );
   }
 
+  /// Search stays on screen; the toggle next to it opens the options panel.
+  Widget _searchRow() {
+    final active = _filter != _FilterOption.all || _selected.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              decoration: const InputDecoration(
+                hintText: 'Search by User ID / Name or number',
+                prefixIcon: Icon(Icons.search),
+                isDense: true,
+              ),
+              onChanged: (value) => setState(() => _query = value),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Tooltip(
+            message: _optionsOpen ? 'Hide options' : 'Show options',
+            child: Material(
+              color: _optionsOpen
+                  ? AppTheme.blue.withValues(alpha: 0.12)
+                  : Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: AppTheme.hairline),
+              ),
+              child: InkWell(
+                key: const Key('results-options-toggle'),
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => setState(() => _optionsOpen = !_optionsOpen),
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Icon(
+                        _optionsOpen ? Icons.expand_less : Icons.tune,
+                        color: AppTheme.blue,
+                      ),
+                      if (active && !_optionsOpen)
+                        Positioned(
+                          top: 10,
+                          right: 10,
+                          child: Container(
+                            width: 9,
+                            height: 9,
+                            decoration: const BoxDecoration(
+                                color: AppTheme.danger, shape: BoxShape.circle),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Everything that used to crowd the top of the page: report selector,
+  /// summary, Sort / Referral / Recalculate, bulk send and filters. Collapsed
+  /// by default so the user cards get the screen; when open it scrolls inside
+  /// a capped height so the cards are never pushed off entirely.
+  Widget _optionsPanel(bool calculated) {
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.42;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 180),
+      alignment: Alignment.topCenter,
+      child: !_optionsOpen
+          ? const SizedBox(width: double.infinity)
+          : ConstrainedBox(
+              key: const Key('results-options-panel'),
+              constraints: BoxConstraints(maxHeight: maxHeight),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (widget.reportPicker != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                        child: widget.reportPicker!,
+                      ),
+                    _SummaryStrip(results: _results),
+                    _toolbar(calculated),
+                    if (calculated) _bulkBar(),
+                    _filterChips(),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _filterChips() {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        itemCount: _FilterOption.values.length,
+        separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.xs),
+        itemBuilder: (context, index) {
+          final option = _FilterOption.values[index];
+          final selected = option == _filter;
+          return ChoiceChip(
+            label: Text(option.label),
+            selected: selected,
+            onSelected: (_) => setState(() => _filter = option),
+            selectedColor: AppTheme.primary.withValues(alpha: 0.16),
+            labelStyle: TextStyle(
+              color: selected ? AppTheme.primary : Colors.black87,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Sort / Referral / Recalculate as one tidy row of equal-height buttons.
+  Widget _toolbar(bool calculated) {
+    final style = OutlinedButton.styleFrom(
+      minimumSize: const Size(0, 40),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      visualDensity: VisualDensity.compact,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+      child: Wrap(
+        spacing: AppSpacing.xs,
+        runSpacing: AppSpacing.xs,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          PopupMenuButton<_SortOption>(
+            tooltip: 'Sort',
+            initialValue: _sort,
+            onSelected: (value) => setState(() => _sort = value),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                  value: _SortOption.nameAsc, child: Text('Name (A-Z)')),
+              PopupMenuItem(
+                  value: _SortOption.nameDesc, child: Text('Name (Z-A)')),
+              PopupMenuItem(
+                  value: _SortOption.payableHighLow,
+                  child: Text('Payable (high-low)')),
+              PopupMenuItem(
+                  value: _SortOption.payableLowHigh,
+                  child: Text('Payable (low-high)')),
+            ],
+            child: IgnorePointer(
+              child: OutlinedButton.icon(
+                style: style,
+                onPressed: () {},
+                icon: const Icon(Icons.sort, size: 18),
+                label: const Text('Sort'),
+              ),
+            ),
+          ),
+          OutlinedButton.icon(
+            style: style,
+            onPressed: _openReferrals,
+            icon: const Icon(Icons.group_add_outlined, size: 18),
+            label: const Text('Referral'),
+          ),
+          if (calculated)
+            OutlinedButton.icon(
+              style: style,
+              onPressed: _recalculate,
+              icon: const Icon(Icons.calculate_outlined, size: 18),
+              label: const Text('Recalculate'),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _bulkBar() {
     final selected = _selectedResults.length;
     final eligible = _allEligible.length;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
-      child: Wrap(
-        spacing: AppSpacing.sm,
-        runSpacing: AppSpacing.xs,
-        crossAxisAlignment: WrapCrossAlignment.center,
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          OutlinedButton.icon(
-            onPressed: selected == 0 ? null : () => _bulkSend(all: false),
-            icon: const Icon(Icons.checklist, size: 18),
-            label: Text('Send Selected ($selected)'),
-          ),
-          OutlinedButton.icon(
-            onPressed: eligible == 0 ? null : () => _bulkSend(all: true),
-            icon: const Icon(Icons.send_and_archive_outlined, size: 18),
-            label: Text('Send All Eligible ($eligible)'),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: selected == 0 ? null : () => _bulkSend(all: false),
+                  icon: const Icon(Icons.checklist, size: 18),
+                  label: Text('Send Selected ($selected)',
+                      overflow: TextOverflow.ellipsis),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: eligible == 0 ? null : () => _bulkSend(all: true),
+                  icon: const Icon(Icons.send_and_archive_outlined, size: 18),
+                  label: Text('Send All Eligible ($eligible)',
+                      overflow: TextOverflow.ellipsis),
+                ),
+              ),
+            ],
           ),
           if (_selected.isNotEmpty)
-            TextButton(
-                onPressed: () => setState(_selected.clear), child: const Text('Clear selection')),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                  onPressed: () => setState(_selected.clear),
+                  child: const Text('Clear selection')),
+            ),
         ],
       ),
     );
@@ -587,7 +818,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
   }
 
   Future<void> _openReferrals() async {
-    await Navigator.of(context).pushNamed(AppRoutes.referrals, arguments: widget.reportId);
+    await Navigator.of(context)
+        .pushNamed(AppRoutes.referrals, arguments: widget.reportId);
     if (mounted) _load(silent: true);
   }
 
@@ -607,26 +839,31 @@ class _ResultsBodyState extends State<_ResultsBody> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel')),
           TextButton(
-              onPressed: () => Navigator.of(context).pop(true), child: const Text('Recalculate')),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Recalculate')),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
-    await Navigator.of(context).pushNamed(AppRoutes.processing, arguments: widget.reportId);
+    await Navigator.of(context)
+        .pushNamed(AppRoutes.processing, arguments: widget.reportId);
     if (mounted) _load(silent: true);
   }
 
   Future<void> _openReview() async {
-    await Navigator.of(context).pushNamed(AppRoutes.review, arguments: widget.reportId);
+    await Navigator.of(context)
+        .pushNamed(AppRoutes.review, arguments: widget.reportId);
     if (mounted) _load(silent: true);
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) return const LoadingView();
-    if (_errorMessage != null) return ErrorView(message: _errorMessage!, onRetry: _load);
+    if (_errorMessage != null)
+      return ErrorView(message: _errorMessage!, onRetry: _load);
     if (_results.isEmpty) {
       final String message;
       switch (ReportStatus.fromString(_report?.status)) {
@@ -634,7 +871,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
         case ReportStatus.processing:
         case ReportStatus.validating:
         case ReportStatus.calculating:
-          message = 'This report is still being processed.\nPull down to refresh.';
+          message =
+              'This report is still being processed.\nPull down to refresh.';
           break;
         case ReportStatus.failed:
           message =
@@ -666,7 +904,8 @@ class _ResultsBodyState extends State<_ResultsBody> {
         children: [
           if (!calculated && !keyboardOpen)
             Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
               child: Container(
                 padding: const EdgeInsets.all(AppSpacing.md),
                 decoration: BoxDecoration(
@@ -685,90 +924,20 @@ class _ResultsBodyState extends State<_ResultsBody> {
                       ),
                     ),
                     const SizedBox(width: AppSpacing.sm),
-                    TextButton(onPressed: _openReview, child: const Text('Review & calculate')),
+                    TextButton(
+                        onPressed: _openReview,
+                        child: const Text('Review & calculate')),
                   ],
                 ),
               ),
             ),
-          if (!keyboardOpen) _SummaryStrip(results: _results),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      hintText: 'Search by User ID / Name or number',
-                      prefixIcon: Icon(Icons.search),
-                      isDense: true,
-                    ),
-                    onChanged: (value) => setState(() => _query = value),
-                  ),
-                ),
-                PopupMenuButton<_SortOption>(
-                  tooltip: 'Sort',
-                  icon: const Icon(Icons.sort),
-                  initialValue: _sort,
-                  onSelected: (value) => setState(() => _sort = value),
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: _SortOption.nameAsc, child: Text('Name (A-Z)')),
-                    PopupMenuItem(value: _SortOption.nameDesc, child: Text('Name (Z-A)')),
-                    PopupMenuItem(
-                        value: _SortOption.payableHighLow, child: Text('Payable (high-low)')),
-                    PopupMenuItem(
-                        value: _SortOption.payableLowHigh, child: Text('Payable (low-high)')),
-                  ],
-                ),
-                TextButton.icon(
-                  onPressed: _openReferrals,
-                  icon: const Icon(Icons.group_add_outlined, size: 18),
-                  label: const Text('Referral', style: TextStyle(fontSize: 13)),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    visualDensity: VisualDensity.compact,
-                    minimumSize: const Size(0, 40),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-                if (calculated)
-                  IconButton(
-                    tooltip: 'Recalculate this report',
-                    icon: const Icon(Icons.calculate_outlined),
-                    onPressed: _recalculate,
-                  ),
-              ],
-            ),
-          ),
-          if (calculated && !keyboardOpen) _bulkBar(),
-          if (!keyboardOpen) ...[
-            SizedBox(
-              height: 36,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                itemCount: _FilterOption.values.length,
-                separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.xs),
-                itemBuilder: (context, index) {
-                  final option = _FilterOption.values[index];
-                  final selected = option == _filter;
-                  return ChoiceChip(
-                    label: Text(option.label),
-                    selected: selected,
-                    onSelected: (_) => setState(() => _filter = option),
-                    selectedColor: AppTheme.primary.withValues(alpha: 0.16),
-                    labelStyle: TextStyle(
-                      color: selected ? AppTheme.primary : Colors.black87,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
+          _searchRow(),
+          if (!keyboardOpen) _optionsPanel(calculated),
           Expanded(
             child: visible.isEmpty
-                ? const EmptyView(message: 'No users match your search.', icon: Icons.search_off)
+                ? const EmptyView(
+                    message: 'No users match your search.',
+                    icon: Icons.search_off)
                 : LayoutBuilder(
                     builder: (context, constraints) {
                       if (constraints.maxWidth < _tableMinWidth) {
@@ -783,8 +952,10 @@ class _ResultsBodyState extends State<_ResultsBody> {
                               AppSpacing.md,
                             ),
                             itemCount: visible.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
-                            itemBuilder: (context, index) => _resultCard(visible[index]),
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: AppSpacing.sm),
+                            itemBuilder: (context, index) =>
+                                _resultCard(visible[index]),
                           ),
                         );
                       }
@@ -792,13 +963,15 @@ class _ResultsBodyState extends State<_ResultsBody> {
                         onRefresh: _load,
                         // The table's rows scroll inside a horizontal scroller, so
                         // the vertical list is one level deeper than the default.
-                        notificationPredicate: (notification) => notification.depth == 1,
+                        notificationPredicate: (notification) =>
+                            notification.depth == 1,
                         child: GridTable(
                           columns: _columns,
                           itemCount: visible.length,
                           rowHeight: Responsive.rowHeight(context, 80),
                           onRowTap: (index) => _openDetail(visible[index]),
-                          cellsBuilder: (context, index) => _cells(visible[index]),
+                          cellsBuilder: (context, index) =>
+                              _cells(visible[index]),
                         ),
                       );
                     },
@@ -815,26 +988,44 @@ class _ResultsBodyState extends State<_ResultsBody> {
 
   Widget _resultCard(BonusResult r) {
     final cells = _cells(r);
-    // Column order: 0 name, 1-4 figures, 5 final payable, 6 number, 7 action.
-    // Label gets the larger share; a value that still doesn't fit scales down.
-    Widget figure(int i) => Row(
-          children: [
-            Expanded(
-              flex: 3,
-              child: Text(
-                _columns[i].label,
-                style: const TextStyle(fontSize: 12.5, color: Colors.black54),
+    // Column order: 0 name, 1 week, 2 previous total, 3 current total, 4 this week's
+    // win/loss, 5 bonus basis, 6 personal, 7 referral, 8 previous balance,
+    // 9 final payable, 10 number, 11 WhatsApp, 12 edit.
+    Widget tile(String label, double? value, Widget figure) {
+      final tint = value == null ? Colors.black38 : Figure.signColor(value);
+      return Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: tint.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label.toUpperCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
+                  color: AppTheme.textMuted,
+                ),
               ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Flexible(
-              flex: 2,
-              child: FittedBox(
-                  fit: BoxFit.scaleDown, alignment: Alignment.centerRight, child: cells[i]),
-            ),
-          ],
-        );
+              const SizedBox(height: 2),
+              FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: figure),
+            ],
+          ),
+        ),
+      );
+    }
 
+    final carry = r.carryForwardBalance ?? 0;
     return Card(
       margin: EdgeInsets.zero,
       child: InkWell(
@@ -848,26 +1039,72 @@ class _ResultsBodyState extends State<_ResultsBody> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: cells[0]),
+                  Expanded(flex: 3, child: cells[0]),
                   const SizedBox(width: AppSpacing.sm),
-                  cells[5],
+                  Flexible(
+                    flex: 2,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.topRight,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Text(
+                            'PAYABLE',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.3,
+                              color: AppTheme.textMuted,
+                            ),
+                          ),
+                          if (r.isCalculated)
+                            Figure.payable(r.payable, size: 18)
+                          else
+                            cells[9],
+                          if (carry < 0)
+                            Text(
+                              'carry ${Formatters.signed(carry)}',
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  color: AppTheme.danger,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
               ),
-              const Divider(height: AppSpacing.lg),
-              figure(1),
-              const SizedBox(height: 4),
-              figure(2),
-              const SizedBox(height: 4),
-              figure(3),
-              const SizedBox(height: 4),
-              figure(4),
+              const SizedBox(height: AppSpacing.xs),
+              cells[1],
+              const SizedBox(height: AppSpacing.sm),
+              Row(children: [
+                tile('Previous total', r.previousReportTotal, cells[2]),
+                const SizedBox(width: AppSpacing.xs),
+                tile('Current total', r.currentReportTotal ?? r.profitLoss, cells[3]),
+              ]),
+              const SizedBox(height: AppSpacing.xs),
+              _weeklyHighlight(r),
+              const SizedBox(height: AppSpacing.xs),
+              Row(children: [
+                tile('Bonus basis', r.bonusBasis, cells[5]),
+                const SizedBox(width: AppSpacing.xs),
+                tile('Previous balance', r.previousBalance, cells[8]),
+              ]),
+              const SizedBox(height: AppSpacing.xs),
+              Row(children: [
+                tile('Personal bonus', r.personalAdjustment, cells[6]),
+                const SizedBox(width: AppSpacing.xs),
+                tile('Referral bonus', r.referralAdjustment, cells[7]),
+              ]),
               const Divider(height: AppSpacing.lg),
               Wrap(
                 alignment: WrapAlignment.spaceBetween,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 spacing: AppSpacing.sm,
                 runSpacing: AppSpacing.xs,
-                children: [cells[6], cells[7]],
+                children: [cells[10], cells[11], cells[12]],
               ),
             ],
           ),
@@ -876,14 +1113,37 @@ class _ResultsBodyState extends State<_ResultsBody> {
     );
   }
 
-  Widget _signedText(double? value) {
-    if (value == null) return const Text('—', style: TextStyle(color: Colors.black38));
-    final color = value > 0 ? AppTheme.success : (value < 0 ? AppTheme.danger : Colors.black54);
-    return Text(
-      Formatters.signed(value),
-      style: TextStyle(fontWeight: FontWeight.w700, color: color),
+  /// The week's actual win/loss, full width and tinted so it stands out on a phone.
+  Widget _weeklyHighlight(BonusResult r) {
+    final change = r.weeklyChange;
+    final tint = change == null ? Colors.black38 : Figure.signColor(change);
+    final caption = change == null
+        ? ''
+        : (change < 0 ? 'LOSS THIS WEEK' : (change > 0 ? 'WIN THIS WEEK' : 'NO CHANGE THIS WEEK'));
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: tint.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              change == null ? "THIS WEEK'S WIN / LOSS" : caption,
+              style: TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.3, color: tint),
+            ),
+          ),
+          Figure.signedBig(change),
+        ],
+      ),
     );
   }
+
+  /// "5–11 Oct 2026" for this report's week (the same for every row).
+  String get _weekLabel => _report?.periodLabel ?? '—';
 
   Widget _nameCell(BonusResult r) {
     return Column(
@@ -905,15 +1165,19 @@ class _ResultsBodyState extends State<_ResultsBody> {
           Text(
             'Referred by ${r.referrerName}',
             overflow: TextOverflow.ellipsis,
-            style:
-                const TextStyle(fontSize: 11.5, color: AppTheme.blue, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+                fontSize: 11.5,
+                color: AppTheme.blue,
+                fontWeight: FontWeight.w600),
           ),
         if (r.referredCount > 0)
           Text(
             'Referrer · ${r.referredCount} referred',
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-                fontSize: 11.5, color: AppTheme.success, fontWeight: FontWeight.w600),
+                fontSize: 11.5,
+                color: AppTheme.success,
+                fontWeight: FontWeight.w600),
           ),
       ],
     );
@@ -944,39 +1208,39 @@ class _ResultsBodyState extends State<_ResultsBody> {
         ),
         Expanded(child: _nameCell(r)),
       ]),
-      // Profit / Loss
-      Text(
-        Formatters.points(r.profitLoss),
-        style: TextStyle(
-          fontWeight: FontWeight.w700,
-          color: r.profitLoss < 0 ? AppTheme.danger : null,
-        ),
-      ),
+      // Week start–end
+      Text(_weekLabel,
+          maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
+      // Previous report total (cumulative)
+      r.previousReportTotal == null
+          ? Figure.signed(null)
+          : Figure.profitLoss(r.previousReportTotal!),
+      // Current report total (cumulative)
+      Figure.profitLoss(r.currentReportTotal ?? r.profitLoss),
+      // This week's actual win / loss
+      Figure.signedBig(r.weeklyChange),
+      // Bonus calculation basis
+      Figure.signed(r.bonusBasis),
       // Personal bonus / adjustment
-      _signedText(r.personalAdjustment),
+      Figure.signed(r.personalAdjustment),
       // Referral bonus / adjustment
-      _signedText(r.referralAdjustment),
+      Figure.signed(r.referralAdjustment),
       // Previous balance
-      _signedText(r.previousBalance),
+      Figure.signed(r.previousBalance),
       // Final payable bonus
       r.isCalculated
           ? Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(
-                  Formatters.rupees(r.payable),
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                    color: r.payable > 0 ? AppTheme.success : Colors.black45,
-                  ),
-                ),
+                Figure.payable(r.payable, size: 15),
                 if (carry < 0)
                   Text(
                     'carry ${Formatters.signed(carry)}',
                     style: const TextStyle(
-                        fontSize: 11, color: AppTheme.danger, fontWeight: FontWeight.w600),
+                        fontSize: 11,
+                        color: AppTheme.danger,
+                        fontWeight: FontWeight.w600),
                   ),
               ],
             )
@@ -986,13 +1250,17 @@ class _ResultsBodyState extends State<_ResultsBody> {
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Flexible(child: Text(r.whatsappNumber!, overflow: TextOverflow.ellipsis)),
+                Flexible(
+                    child: Text(r.whatsappNumber!,
+                        overflow: TextOverflow.ellipsis)),
                 IconButton(
                   tooltip: 'Edit number',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  icon: const Icon(Icons.edit_outlined, size: 18, color: AppTheme.blue),
+                  constraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 32),
+                  icon: const Icon(Icons.edit_outlined,
+                      size: 18, color: AppTheme.blue),
                   onPressed: () => _editNumber(r),
                 ),
               ],
@@ -1021,35 +1289,26 @@ class _ResultsBodyState extends State<_ResultsBody> {
     if (!r.hasPayableBonus) {
       return Text(
         r.isCalculated ? 'No bonus' : '—',
-        style: const TextStyle(color: Colors.black38, fontWeight: FontWeight.w600),
+        style:
+            const TextStyle(color: Colors.black38, fontWeight: FontWeight.w600),
       );
     }
     // 'sending' that survives a reload means a send never finished: it may be
     // retried (the server still refuses a duplicate while one is truly in flight).
-    final canSend = r.hasWhatsAppNumber;
-    final label = r.isSent || r.isQueued
-        ? 'Resend'
-        : r.canRetrySend
-            ? 'Retry send'
-            : 'Auto Send WhatsApp';
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ElevatedButton.icon(
-          onPressed: canSend ? () => _sendWhatsApp(r) : null,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.success,
-            foregroundColor: Colors.white,
-            minimumSize: const Size(0, 34),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-          ),
-          icon: Icon(r.isAccepted ? Icons.check : Icons.send_outlined, size: 16),
-          label: Text(label, style: const TextStyle(fontSize: 12)),
+        WhatsAppMenuButton(
+          compact: true,
+          enabled: r.hasWhatsAppNumber,
+          onSelected: (mode) => mode == WhatsAppMode.auto
+              ? _sendWhatsApp(r)
+              : startManualSend(context, r),
         ),
         const SizedBox(height: 2),
         if (!r.hasWhatsAppNumber)
-          const Text('Add a number first', style: TextStyle(fontSize: 10.5, color: Colors.black45))
+          const Text('Add a number first',
+              style: TextStyle(fontSize: 10.5, color: Colors.black45))
         else
           Tooltip(
             message: r.sendError ?? '',
@@ -1069,42 +1328,51 @@ class _SummaryStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final payableRows = results.where((r) => r.hasPayableBonus);
-    final totalPayable = payableRows.fold<double>(0, (sum, r) => sum + r.payable);
-    final carried = results.where((r) => (r.carryForwardBalance ?? 0) < 0).length;
+    final totalPayable =
+        payableRows.fold<double>(0, (sum, r) => sum + r.payable);
+    final carried =
+        results.where((r) => (r.carryForwardBalance ?? 0) < 0).length;
 
     final chips = [
-      _SummaryChip(label: 'Users', value: '${results.length}'),
-      _SummaryChip(label: 'Payable users', value: '${payableRows.length}'),
+      _SummaryChip(
+          label: 'Users',
+          value: '${results.length}',
+          icon: Icons.groups_outlined),
+      _SummaryChip(
+        label: 'Payable users',
+        value: '${payableRows.length}',
+        icon: Icons.person_outline,
+      ),
       _SummaryChip(
         label: 'Total payable',
         value: Formatters.rupees(totalPayable),
+        icon: Icons.payments_outlined,
         color: AppTheme.success,
       ),
       _SummaryChip(
         label: 'Carried forward',
         value: '$carried',
+        icon: Icons.redo,
         color: carried > 0 ? AppTheme.danger : null,
       ),
     ];
     final padding = Responsive.pagePadding(context);
 
-    // Phones: one swipeable row (a wrapped block of chips would push the
-    // results far down the screen); wider screens keep the wrapped layout.
-    if (MediaQuery.sizeOf(context).width < 600) {
-      return SizedBox(
-        height: 76 + (MediaQuery.textScalerOf(context).scale(25) - 25) * 1.4,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          padding: EdgeInsets.symmetric(horizontal: padding, vertical: AppSpacing.sm),
-          itemCount: chips.length,
-          separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
-          itemBuilder: (context, index) => chips[index],
-        ),
-      );
-    }
+    // Phones: a 2 x 2 grid (everything visible, nothing to swipe); wider
+    // screens: one row of four equal cards.
     return Padding(
-      padding: EdgeInsets.fromLTRB(padding, AppSpacing.md, padding, AppSpacing.sm),
-      child: Wrap(spacing: AppSpacing.sm, runSpacing: AppSpacing.sm, children: chips),
+      padding:
+          EdgeInsets.fromLTRB(padding, AppSpacing.md, padding, AppSpacing.sm),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final columns = constraints.maxWidth < 600 ? 2 : 4;
+        const gap = AppSpacing.sm;
+        final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [for (final c in chips) SizedBox(width: width, child: c)],
+        );
+      }),
     );
   }
 }
@@ -1112,33 +1380,69 @@ class _SummaryStrip extends StatelessWidget {
 class _SummaryChip extends StatelessWidget {
   final String label;
   final String value;
+  final IconData icon;
   final Color? color;
 
-  const _SummaryChip({required this.label, required this.value, this.color});
+  const _SummaryChip(
+      {required this.label,
+      required this.value,
+      required this.icon,
+      this.color});
 
   @override
   Widget build(BuildContext context) {
+    final accent = color ?? AppTheme.blue;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: AppTheme.hairline),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
         children: [
-          Text(
-            label.toUpperCase(),
-            style: const TextStyle(
-              fontSize: 9.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
-              color: Colors.black45,
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, size: 18, color: accent),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                    color: AppTheme.textMuted,
+                  ),
+                ),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                      color: color ?? AppTheme.textStrong,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          Text(value, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: color)),
         ],
       ),
     );

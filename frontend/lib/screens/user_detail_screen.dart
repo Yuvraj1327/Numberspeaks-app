@@ -10,7 +10,9 @@ import '../repositories/report_repository.dart';
 import '../routing/app_router.dart';
 import '../routing/app_routes.dart';
 import 'report_review_screen.dart' show EditRowSheet;
+import '../widgets/figures.dart';
 import '../widgets/whatsapp_message_dialog.dart';
+import '../widgets/user_whatsapp_button.dart';
 import '../widgets/whatsapp_number_dialog.dart';
 
 /// Individual user: this period's calculation breakdown (when opened from a
@@ -394,11 +396,37 @@ class _BreakdownCard extends StatelessWidget {
           children: [
             Text('Calculation breakdown', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: AppSpacing.sm),
-            _BreakdownRow(
-              label: 'Profit / Loss this period',
-              value: Formatters.signed(r.profitLoss),
-              note: r.profitLoss < 0 ? 'A loss earns a bonus' : (r.profitLoss > 0 ? 'A win is deducted' : null),
-            ),
+            if (r.weeklyChange != null) ...[
+              _BreakdownRow(
+                label: 'Previous report total',
+                value: Formatters.signed(r.previousReportTotal ?? 0),
+                color: signColor(r.previousReportTotal),
+              ),
+              _BreakdownRow(
+                label: 'Current report total',
+                value: Formatters.signed(r.currentReportTotal ?? r.profitLoss),
+                color: signColor(r.currentReportTotal ?? r.profitLoss),
+              ),
+              _BreakdownRow(
+                label: "This week's win / loss",
+                value: Formatters.signed(r.weeklyChange!),
+                color: signColor(r.weeklyChange),
+                bold: true,
+                note: r.weeklyChange! < 0
+                    ? 'Current - previous: a loss earns a bonus'
+                    : (r.weeklyChange! > 0 ? 'Current - previous: a win is deducted' : 'Current - previous'),
+              ),
+              _BreakdownRow(
+                label: 'Bonus calculation basis',
+                value: Formatters.signed(r.bonusBasis ?? r.weeklyChange!),
+                color: signColor(r.bonusBasis ?? r.weeklyChange),
+              ),
+            ] else
+              _BreakdownRow(
+                label: 'Profit / Loss this period',
+                value: Formatters.signed(r.profitLoss),
+                note: r.profitLoss < 0 ? 'A loss earns a bonus' : (r.profitLoss > 0 ? 'A win is deducted' : null),
+              ),
             _BreakdownRow(
               label: 'Previous carried balance',
               value: Formatters.signed(r.previousBalance ?? 0),
@@ -671,14 +699,14 @@ class _WhatsAppCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
               ),
               const SizedBox(height: AppSpacing.sm),
-              ElevatedButton.icon(
-                onPressed: canSend ? onSend : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.success,
-                  foregroundColor: Colors.white,
+              Align(
+                alignment: Alignment.centerLeft,
+                child: WhatsAppMenuButton(
+                  enabled: canSend,
+                  onSelected: (mode) => mode == WhatsAppMode.auto
+                      ? onSend()
+                      : startManualSend(context, r.copyWith(whatsappNumber: number)),
                 ),
-                icon: const Icon(Icons.send_outlined, size: 18),
-                label: Text(r.isSent || r.isQueued ? 'Resend' : r.canRetrySend ? 'Retry send' : 'Auto Send WhatsApp'),
               ),
               if (reason != null)
                 Padding(
@@ -748,7 +776,12 @@ class _WeeksCard extends StatelessWidget {
           spacing: AppSpacing.md,
           runSpacing: AppSpacing.xs,
           children: [
-            _MiniStat('P/L', Formatters.points(w.profitLoss)),
+            if (w.previousReportTotal != null)
+              _MiniStat('Prev total', Formatters.points(w.previousReportTotal!)),
+            _MiniStat('Current total', Formatters.points(w.profitLoss)),
+            if (w.weeklyChange != null)
+              _MiniStat('This week', Formatters.signed(w.weeklyChange!),
+                  color: Figure.signColor(w.weeklyChange!)),
             _MiniStat('Personal', Formatters.signed(w.personalAdjustment)),
             _MiniStat('Referral', Formatters.signed(w.referralAdjustment)),
             _MiniStat('Previous', Formatters.signed(w.previousBalance)),

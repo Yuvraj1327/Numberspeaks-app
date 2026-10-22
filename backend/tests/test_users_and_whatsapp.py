@@ -91,7 +91,7 @@ def test_user_search(a):
 
 def test_history_lists_each_calculation_with_its_breakdown(a):
     _, w1 = a.run_week([("Sam", 10000)], "w1.pdf")
-    a.run_week([("Sam", -5000)], "w2.pdf")
+    a.run_week([("Sam", 5000)], "w2.pdf")
     h = a.get(f"/users/{w1['Sam']['user_id']}/history").json()
     assert h["user"]["name"] == "Sam" and len(h["history"]) == 2
     newest, oldest = h["history"][0], h["history"][1]

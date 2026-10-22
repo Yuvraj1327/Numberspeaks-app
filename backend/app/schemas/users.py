@@ -32,6 +32,8 @@ class HistoryEntry(BaseModel):
     period_end: Optional[str] = None
     calculated_at: str
     profit_loss: float
+    previous_report_total: Optional[float] = None
+    weekly_change: Optional[float] = None
     personal_rate: float
     personal_adjustment: float
     referral_adjustment: float
@@ -59,6 +61,10 @@ class WeekEntry(BaseModel):
     is_current: bool = False
     calculated_at: Optional[str] = None
     profit_loss: float
+    current_report_total: float = 0.0
+    previous_report_total: Optional[float] = None  # None = calculated before weekly differences existed
+    weekly_change: Optional[float] = None
+    bonus_basis: Optional[float] = None
     personal_adjustment: float
     referral_adjustment: float
     previous_balance: float

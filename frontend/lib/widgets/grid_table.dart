@@ -69,6 +69,7 @@ class GridTable extends StatelessWidget {
                         onTap: onRowTap == null ? null : () => onRowTap!(index),
                         child: DecoratedBox(
                           decoration: BoxDecoration(
+                            color: index.isOdd ? AppTheme.surfaceMuted.withValues(alpha: 0.45) : null,
                             border: Border(
                               bottom: BorderSide(color: AppTheme.navy.withValues(alpha: 0.07)),
                             ),
@@ -113,8 +114,11 @@ class _HeaderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 44,
-      color: AppTheme.surfaceMuted,
+      height: 48,
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceMuted,
+        border: Border(bottom: BorderSide(color: AppTheme.navy.withValues(alpha: 0.12))),
+      ),
       child: Row(
         children: [
           for (var i = 0; i < columns.length; i++)
@@ -130,10 +134,10 @@ class _HeaderRow extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     textAlign: columns[i].numeric ? TextAlign.right : TextAlign.left,
                     style: const TextStyle(
-                      fontSize: 10.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.w800,
-                      letterSpacing: 0.3,
-                      color: Colors.black54,
+                      letterSpacing: 0.4,
+                      color: AppTheme.textMuted,
                     ),
                   ),
                 ),

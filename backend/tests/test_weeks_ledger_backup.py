@@ -47,7 +47,7 @@ def test_bad_period_values(a):
 def test_carry_forward_follows_period_not_upload_order(a):
     # Import the LATER week first; calculate the earlier week first. Week 2 must
     # carry week 1's balance even though it was uploaded before it.
-    r2 = up(a, [("Amy", -10000)], W2).json()["report_id"]
+    r2 = up(a, [("Amy", 10000)], W2).json()["report_id"]
     r1 = week(a, [("Amy", 20000)], W1)                     # win -> -600 carried
     assert a.calculate(r2).json()["status"] == "completed"
     amy = a.results(r2)["Amy"]
@@ -58,7 +58,7 @@ def test_carry_forward_follows_period_not_upload_order(a):
 
 def test_carry_forward_in_order(a):
     r1 = week(a, [("Amy", 10000)], W1)           # -300
-    r2 = week(a, [("Amy", -10000)], W2)          # +300 personal, previous -300
+    r2 = week(a, [("Amy", 0)], W2)          # +300 personal, previous -300
     amy = a.results(r2)["Amy"]
     assert amy["previous_balance"] == -300.0 and amy["final_balance"] == 0.0
     # Recalculating week 2 gives the same numbers (carried exactly once)

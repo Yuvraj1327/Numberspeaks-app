@@ -42,6 +42,20 @@ class BonusResult(BaseModel):
     )
 
     # --- Calculation breakdown (all null until calculated) ---------------
+    previous_report_total: Optional[float] = Field(
+        None, description="This user's cumulative total in the previous report (0 if they had none)."
+    )
+    current_report_total: Optional[float] = Field(
+        None, description="This report's cumulative total (same as profit_loss)."
+    )
+    weekly_change: Optional[float] = Field(
+        None,
+        description="This week's actual win/loss = current - previous cumulative total "
+        "(positive = win, negative = loss).",
+    )
+    bonus_basis: Optional[float] = Field(
+        None, description="The amount the personal bonus % was applied to (the weekly change)."
+    )
     personal_rate_used: Optional[float] = Field(None, description="The personal rate applied, e.g. 0.03.")
     personal_adjustment: Optional[float] = Field(
         None, description="+3% of a loss, -3% of a win, 0 for zero (rate configurable)."
